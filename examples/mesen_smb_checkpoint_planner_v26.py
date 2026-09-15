@@ -1,28 +1,34 @@
 #!/usr/bin/env python3
-"""V26 live planner: current-terrain gap preempts stale progress responses.
+"""V26 live planner: current-terrain gap escape outranks stale progress.
 
-The V25 field run reproduced the long-standing World 1-1 pit failure.  The
-important evidence was not merely the terminal death: the current authoritative
-radar already reported the gap while Mario was airborne, but V24 partial-plan
-responses then replaced the active jump with stale ``fm_run`` / ``fm_brake_jump``
-responses whose old roots had only proven short landing events.
+The V25 field run reproduced the long-standing World 1-1 pit failure. Current
+authoritative radar already reported a near gap while Mario was airborne, but
+V24 partial-plan responses then replaced the active jump with stale ``fm_run`` /
+``fm_brake_jump`` responses rooted 12 frames earlier.
 
-V26 fixes that policy inversion.  A *current* near-gap observation is scene
-safety evidence and outranks asynchronous progress/reward selection.  If Mario
-is already airborne, authority holds RIGHT+A+B for exactly one 4-frame control
-quantum, appends RIGHT+B as the bounded continuation, then re-observes.  Grounded
-near-gap behavior remains V16's existing re-arm emergency path.
+The first V26 draft tried a 4-frame RIGHT+A+B extension. The deterministic
+``pit-v25-gen302`` Mesen replay falsified that policy: ``gap_extend4`` died, while
+re-armed short/long jumps from the exact same frame/X/Y state landed safely.
 
-This is not a World 1-1 coordinate script and does not claim that ``gap=None`` is
-safe.  It only prevents an observed gap from being overwritten by a stale plan.
+V26 therefore uses a stateful SURVIVE commitment instead of repeatedly making a
+one-quantum decision. Once a current near-gap observation catches Mario airborne,
+authority starts the exact re-arm long-jump schedule:
+
+    RIGHT+B 1f -> RIGHT+A+B 15f -> RIGHT+B tail
+
+and keeps the *same root frame* on subsequent 4-frame control quanta. This means
+the schedule advances rather than restarting, and lower-priority asynchronous
+progress/reward responses cannot overwrite the crossing. The commitment clears
+only after current authoritative telemetry reports Mario grounded again.
+
+This is scene-driven, not a World 1-1 coordinate script. ``gap=None`` is still
+UNKNOWN rather than SAFE, so a temporary terrain-radar dropout cannot cancel an
+already-started crossing commitment.
 """
 
 from __future__ import annotations
 
-from fami_pixel.games.smb1.terrain_guard import (
-    airborne_gap_extension_schedule,
-    near_gap_guard,
-)
+from fami_pixel.games.smb1.terrain_guard import gap_escape_schedule, near_gap_guard
 
 import mesen_smb_checkpoint_planner_v11 as v11
 import mesen_smb_checkpoint_planner_v15 as v15
@@ -31,32 +37,79 @@ import mesen_smb_checkpoint_planner_v25 as v25
 
 
 PLANNER_NAME = "v26-current-gap-preemption"
-GAP_EXTEND_CANDIDATE = "terrain_gap_extend4"
+GAP_ESCAPE_CANDIDATE = "terrain_gap_escape_rearm"
 _BASE_V25_AUTHORITY = v25.authority_main
 _BASE_V25_LABEL = v25._v25_schedule_label
 _BASE_V25_PLAN = v25._best_v25_plan
 
+_gap_commit_root_frame: int | None = None
+_gap_commit_trigger_dx: int | None = None
 
-def _gap_extend_plan(current_frame: int, live_radar: dict, *, gap_dx: int) -> dict:
-    """Return one bounded airborne jump extension from current authority state."""
 
+def _reset_gap_commitment() -> None:
+    global _gap_commit_root_frame, _gap_commit_trigger_dx
+    _gap_commit_root_frame = None
+    _gap_commit_trigger_dx = None
+
+
+def _start_gap_commitment(current_frame: int, gap_dx: int) -> None:
+    global _gap_commit_root_frame, _gap_commit_trigger_dx
+    _gap_commit_root_frame = int(current_frame)
+    _gap_commit_trigger_dx = int(gap_dx)
+
+
+def _gap_commitment_active(current_frame: int, live_radar: dict) -> bool:
+    """Keep a started crossing until current authority proves Mario landed."""
+
+    global _gap_commit_root_frame
+    if _gap_commit_root_frame is None:
+        return False
+
+    # Do not clear on gap=None: #31 terrain coverage can be UNKNOWN. The one
+    # positive completion signal available to this guard is authoritative
+    # grounded telemetry after at least one frame of committed execution.
+    if (
+        int(current_frame) > int(_gap_commit_root_frame)
+        and bool(live_radar.get("grounded", False))
+    ):
+        _reset_gap_commitment()
+        return False
+    return True
+
+
+def _gap_escape_plan(current_frame: int, live_radar: dict) -> dict:
+    assert _gap_commit_root_frame is not None
+    assert _gap_commit_trigger_dx is not None
+
+    current_gap = live_radar.get("nearest_gap_dx")
+    try:
+        current_gap_dx = None if current_gap is None else int(current_gap)
+    except (TypeError, ValueError):
+        current_gap_dx = None
+
+    age = max(0, int(current_frame) - int(_gap_commit_root_frame))
     return {
         "generation": -1,
         "worker": "current-terrain",
-        "root_frame": int(current_frame),
-        "candidate": GAP_EXTEND_CANDIDATE,
-        "schedule": airborne_gap_extension_schedule(prefix_frames=4),
+        "root_frame": int(_gap_commit_root_frame),
+        "candidate": GAP_ESCAPE_CANDIDATE,
+        "schedule": gap_escape_schedule(hold_frames=15),
         "score": [1, 0, 0, 0],
         "progress": 0,
         "terminal": "none",
-        "age": 0,
+        "age": age,
         "compute_ms": 0.0,
         "risk_probability": 0.0,
         "no_progress_probability": 0.0,
-        "guard_mode": f"current-gap-airborne-extend[gap:{int(gap_dx)}]",
+        "guard_mode": (
+            "current-gap-rearm-commit["
+            f"trigger:{int(_gap_commit_trigger_dx)},"
+            f"current:{current_gap_dx},age:{age}f]"
+        ),
         "live_radar": dict(live_radar or {}),
-        "terrain_gap_dx": int(gap_dx),
-        "terrain_guard": "airborne-extend",
+        "terrain_gap_dx": current_gap_dx,
+        "terrain_gap_trigger_dx": int(_gap_commit_trigger_dx),
+        "terrain_guard": "airborne-rearm-commit",
     }
 
 
@@ -67,23 +120,37 @@ def _best_v26_plan(
     last_applied_generation: int,
     live_radar: dict,
 ):
-    """Make current positive gap evidence outrank stale async planner output."""
+    """Prioritize a current/sticky gap crossing over stale async output."""
 
-    gap = near_gap_guard(live_radar, trigger_px=v15.RADAR_GAP_TRIGGER_PX)
-    if gap is not None and gap.mode == "airborne-extend":
-        result = _gap_extend_plan(current_frame, live_radar, gap_dx=gap.gap_dx)
+    if _gap_commitment_active(current_frame, live_radar):
+        result = _gap_escape_plan(current_frame, live_radar)
         v23._latest_forward_meta = {
-            "forward_model_status": "current-gap-preempt",
-            "objective_mode": live_radar.get("objective_mode", "PROGRESS"),
-            "forward_model_plan": GAP_EXTEND_CANDIDATE,
+            "forward_model_status": "current-gap-commit",
+            "objective_mode": "SURVIVE",
+            "forward_model_plan": GAP_ESCAPE_CANDIDATE,
             "forward_model_event": "current-gap",
-            "terrain_gap_dx": gap.gap_dx,
-            "terrain_guard": gap.mode,
+            "terrain_gap_dx": result.get("terrain_gap_dx"),
+            "terrain_gap_trigger_dx": result.get("terrain_gap_trigger_dx"),
+            "terrain_guard": result.get("terrain_guard"),
+            "terrain_commit_age_frames": result.get("age"),
         }
         return result
 
-    # Grounded near-gap cases intentionally delegate.  V17/V16's authority loop
-    # will replace a non-jump result with its established re-arm emergency jump.
+    gap = near_gap_guard(live_radar, trigger_px=v15.RADAR_GAP_TRIGGER_PX)
+    if gap is not None and gap.mode == "airborne-rearm-commit":
+        _start_gap_commitment(current_frame, gap.gap_dx)
+        return _best_v26_plan(
+            response_paths,
+            current_frame,
+            freshness,
+            last_applied_generation,
+            live_radar,
+        )
+
+    # Grounded near-gap cases intentionally delegate. V17/V16's current-radar
+    # authority loop already replaces a non-jump result with its re-arm emergency
+    # jump. If that jump reaches a near-gap airborne state on the next quantum,
+    # this layer takes over and keeps the crossing committed until landing.
     return _BASE_V25_PLAN(
         response_paths,
         current_frame,
@@ -94,15 +161,16 @@ def _best_v26_plan(
 
 
 def _v26_schedule_label(candidate_name: str) -> str:
-    if candidate_name == GAP_EXTEND_CANDIDATE:
-        return "TERRAIN GAP EXTEND: RIGHT+A+B 4f -> RIGHT+B tail"
+    if candidate_name == GAP_ESCAPE_CANDIDATE:
+        return "TERRAIN GAP ESCAPE: RIGHT+B 1f -> RIGHT+A+B 15f -> RIGHT+B until landing"
     return _BASE_V25_LABEL(candidate_name)
 
 
 def authority_main(args) -> int:
+    _reset_gap_commitment()
     v11._log(
-        "Planner V26: current near-gap preemption enabled | "
-        f"gap<={v15.RADAR_GAP_TRIGGER_PX}px airborne=RIGHT+A+B 4f then replan"
+        "Planner V26: current near-gap SURVIVE commitment enabled | "
+        f"gap<={v15.RADAR_GAP_TRIGGER_PX}px airborne=rearm+15f hold; keep root until landing"
     )
     return _BASE_V25_AUTHORITY(args)
 
@@ -113,7 +181,7 @@ def _install_v26_overrides() -> None:
     v23._forward_schedule_label = _v26_schedule_label
     v23.authority_main = authority_main
     v23.__file__ = __file__
-    v15._JUMP_NAMES.add(GAP_EXTEND_CANDIDATE)
+    v15._JUMP_NAMES.add(GAP_ESCAPE_CANDIDATE)
 
 
 def main() -> int:
