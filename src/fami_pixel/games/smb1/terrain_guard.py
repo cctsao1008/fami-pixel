@@ -1,14 +1,20 @@
 """Fail-closed live guard for near-field SMB1 terrain gaps.
 
 This module does not try to turn the rolling block buffers into a complete world
-model.  It handles one narrower contract exposed by field evidence: when the
+model. It handles one narrower contract exposed by field evidence: when the
 *current authoritative* radar already reports a near gap, an asynchronous stale
-progress plan must not be allowed to release A and replace an active jump merely
-because that old branch reached a short landing event.
+progress plan must not be allowed to replace the jump state with a plan rooted in
+older geometry.
 
-Mesen remains transition authority.  This guard only decides whether a current
-near-gap observation requires a bounded jump extension while Mario is already
-airborne.
+The V25 generation-302 exact-Mesen regression falsified a simple 4-frame
+RIGHT+A+B extension: that branch died, while re-armed short/long jumps from the
+same state landed safely. The live guard therefore exposes a re-arm + sustained-A
+escape schedule. The caller is responsible for keeping that schedule rooted at
+the original commitment frame until authoritative landing evidence clears it.
+
+Mesen remains transition authority. ``nearest_gap_dx is None`` is never promoted
+to SAFE here; once a crossing commitment starts, a temporary radar dropout is
+insufficient reason to hand control back to stale asynchronous progress output.
 """
 
 from __future__ import annotations
@@ -19,7 +25,7 @@ from .actions import Smb1Action, action_to_nes_buttons
 
 
 DEFAULT_NEAR_GAP_PX = 80
-DEFAULT_AIRBORNE_EXTEND_FRAMES = 4
+DEFAULT_GAP_REARM_HOLD_FRAMES = 15
 
 
 @dataclass(frozen=True)
@@ -36,7 +42,7 @@ def near_gap_guard(
 ) -> TerrainGapGuard | None:
     """Classify a currently observed near gap for live preemption.
 
-    ``None`` means there is no current positive near-gap observation.  The
+    ``None`` means there is no current positive near-gap observation. The
     function intentionally does not infer SAFE from ``nearest_gap_dx is None``;
     absence of a decoded gap can still be UNKNOWN when terrain coverage is
     limited.
@@ -58,27 +64,37 @@ def near_gap_guard(
     return TerrainGapGuard(
         gap_dx=gap_dx,
         grounded=grounded,
-        mode="grounded-rearm" if grounded else "airborne-extend",
+        mode="grounded-rearm" if grounded else "airborne-rearm-commit",
     )
 
 
-def airborne_gap_extension_schedule(
+def gap_escape_schedule(
     *,
-    prefix_frames: int = DEFAULT_AIRBORNE_EXTEND_FRAMES,
+    hold_frames: int = DEFAULT_GAP_REARM_HOLD_FRAMES,
 ) -> list[dict[str, int]]:
-    """Hold RIGHT+A+B for one bounded prefix, then release A but keep running.
+    """Return the exact re-arm/hold/tail schedule proven by the pit regression.
 
-    V11-style authority holds the final schedule segment while waiting for the
-    next plan.  Appending RIGHT+B therefore prevents an unresolved planner cycle
-    from turning the bounded extension into an unbounded A hold.
+    From the V25 generation-302 state, ``RIGHT+A+B 4f`` followed by RIGHT+B died.
+    Both re-armed jump probes survived; the long variant provided the larger
+    landing margin. This schedule matches that long variant:
+
+    ``RIGHT+B 1f -> RIGHT+A+B hold_frames -> RIGHT+B tail``.
+
+    V11-style authority holds the final segment after the explicit schedule, so
+    callers can keep the same root frame while the crossing commitment remains
+    active without repeatedly restarting the A re-arm sequence.
     """
 
-    if prefix_frames <= 0:
-        raise ValueError("prefix_frames must be > 0")
+    if hold_frames <= 0:
+        raise ValueError("hold_frames must be > 0")
     return [
         {
+            "buttons": int(action_to_nes_buttons(Smb1Action.RIGHT_B)),
+            "frames": 1,
+        },
+        {
             "buttons": int(action_to_nes_buttons(Smb1Action.RIGHT_A_B)),
-            "frames": int(prefix_frames),
+            "frames": int(hold_frames),
         },
         {
             "buttons": int(action_to_nes_buttons(Smb1Action.RIGHT_B)),
