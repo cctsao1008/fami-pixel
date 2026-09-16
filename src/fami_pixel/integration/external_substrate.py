@@ -158,16 +158,12 @@ class Smb1ExternalSubstratePort:
         self._rollout_provider = rollout_provider
         self._observation_reader = observation_reader
         self._button_writer = button_writer
+        self._last_observation: FamiObservation | None = None
 
     def observe(self) -> FamiObservation:
-        frame = int(self._core.frame_count())
-        smb1 = self._observation_reader(self._core, frame)
-        return FamiObservation(
-            observation_id=f"fami-observation:{frame}:{uuid4()}",
-            source_identity=self._source_identity,
-            native_frame_id=frame,
-            smb1=smb1,
-        )
+        value = self._read_observation()
+        self._last_observation = value
+        return value
 
     def propose_actions(self, observation: FamiObservation) -> tuple[BoundedAction, ...]:
         if self._action_proposer is None:
@@ -191,12 +187,15 @@ class Smb1ExternalSubstratePort:
         return value
 
     def execute_bounded(self, action: BoundedAction) -> LiveExecutionTrace:
-        pre = self.observe()
+        pre = self._last_observation
+        if pre is None:
+            raise RuntimeError("observe() must freeze a live pre-state before execution")
         if action.source_observation_id != pre.observation_id:
-            # The caller may intentionally execute a candidate from a frozen
-            # observation. Refuse silent stale-root execution; the orchestrator
-            # must explicitly remap/revalidate against the current observation.
-            raise ValueError("bounded action source observation is not the live pre-state")
+            raise ValueError("bounded action does not bind the frozen live pre-state")
+
+        authoritative_frame = int(self._core.frame_count())
+        if authoritative_frame != pre.native_frame_id:
+            raise ValueError("live state advanced after the action source observation")
 
         start_frame = pre.native_frame_id
         requested = sum(chunk.frames for chunk in action.chunks)
@@ -206,7 +205,8 @@ class Smb1ExternalSubstratePort:
 
         # Release after the bounded command without advancing another frame.
         self._button_writer(self._core, self._controller_port, 0)
-        post = self.observe()
+        post = self._read_observation()
+        self._last_observation = post
         realized = post.native_frame_id - start_frame
         if realized < 0:
             raise RuntimeError("authoritative frame counter moved backwards")
@@ -238,6 +238,16 @@ class Smb1ExternalSubstratePort:
                 "requested_frames": trace.requested_frames,
                 "realized_frames": trace.realized_frames,
             },
+        )
+
+    def _read_observation(self) -> FamiObservation:
+        frame = int(self._core.frame_count())
+        smb1 = self._observation_reader(self._core, frame)
+        return FamiObservation(
+            observation_id=f"fami-observation:{frame}:{uuid4()}",
+            source_identity=self._source_identity,
+            native_frame_id=frame,
+            smb1=smb1,
         )
 
     @staticmethod
