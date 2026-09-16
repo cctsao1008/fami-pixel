@@ -78,28 +78,106 @@ DEATH
 
 Tie-breakers may use progress, target approach, landing quality, learned risk, or compute cost. A learned estimate must never override exact Mesen evidence that another branch is safer or superior.
 
+## Bounded multi-chunk search
+
+The ordinary PROGRESS search is no longer limited to a fixed list of single macros. A bounded chunk vocabulary can compose short sequences from primitives such as:
+
+```text
+run
+coast / release
+brake / backtrack
+A-hold continuation
+jump re-arm + short hold
+jump re-arm + long hold
+```
+
+Search depth counts composable chunks rather than raw NES frames. The current experimental implementation expands depth 3 and rejects prefixes longer than 28 frames before learned ranking.
+
+The generator remains deliberately finite and inspectable. It does not expand unrestricted NES button combinations.
+
+## Learned rank/prune contract
+
+The tiny SMB1 surrogate is used before exact rollout to reduce emulator work:
+
+```text
+all bounded candidates
+        |
+        v
+TinySurrogateMLP
+  predicted delta-X
+  risk probability
+  no-progress probability
+        |
+        v
+fixed top-K frontier
+        |
+        v
+exact Mesen evaluation
+```
+
+The learned model is **not** a branch authority. Progress prediction is the primary ordering signal; risk and no-progress are soft ordering signals rather than hard vetoes because their calibration is weaker. Known-good baseline maneuvers remain mandatory diversity anchors so an OOD learned score cannot prune every established escape/action family.
+
+The historical model feature contract observes only the first two action commands. Multi-chunk plans may be longer than that window. In those cases the surrogate is explicitly ranking a visible prefix while Mesen evaluates the complete candidate. This limitation is telemetry, not hidden certainty.
+
+Current experimental budget:
+
+```text
+search depth = 3 chunks
+top-K        = 12 candidate trajectories
+live prefix  = 4 authoritative frames
+```
+
+Each worker records generated/pruned/evaluated counts and the learned prediction attached to the selected exact-Mesen branch.
+
 ## Receding horizon and commitment
 
 Ordinary actions execute only a short prefix before replanning. This does **not** mean every control quantum may restart a safety-critical multi-frame action.
 
 A crossing or other committed maneuver keeps one root and advances schedule age across quanta until authoritative landing or explicit invalidation. Lower-priority stale results cannot break the commitment.
 
-## Action vocabulary
+Current policy authority ordering remains:
 
-Branching remains bounded but composable. Useful chunks include run, coast/release, short LEFT/RIGHT corrections, and A hold/release segments. Fami Pixel intentionally does not expand every NES button combination blindly.
+```text
+current SURVIVE commitment
+        >
+current landing-zone enemy preemption
+        >
+sticky COLLECT objective
+        >
+learned-ranked PROGRESS search
+```
+
+The learned-ranked search therefore cannot displace an already-active V26 safety commitment.
 
 ## Terrain and landing
 
-Enemy-only landing telemetry is not terrain safety. Terrain evidence should distinguish positive support/gap knowledge from unknown state; `UNKNOWN` must not silently become safe.
+Enemy-only landing telemetry is not terrain safety. Terrain evidence distinguishes:
 
-Exact branch outcome remains the final safety oracle when available.
+```text
+SAFE
+GAP
+UNKNOWN
+```
+
+`UNKNOWN` never silently becomes safe. Exact branch outcome remains the final trajectory oracle when available.
 
 ## Regression discipline
 
 Development uses deterministic local save-state roots for narrow failures before replaying a full level. Example classes include first-enemy, enemy-cluster landing, pit crossing, reward interception, and stall recovery.
 
+The deterministic `tools/smb1_bounded_search_probe.py` gate exercises the complete proposal pipeline from one scenario root:
+
+```text
+bounded generation
+-> TinySurrogateMLP rank/prune
+-> top-K exact Mesen rollouts
+-> safe resolved selection
+```
+
 A full World 1-1 run is integration evidence. It does not replace local scenario gates.
 
 ## Current milestone
 
-The V26 integration run on 2026-09-16 completed World 1-1 autonomously after deterministic enemy and pit regressions were closed locally. The broader research track remains open for richer search, terrain-validity semantics, and learned rank/prune evaluation.
+The V26 integration run on 2026-09-16 completed World 1-1 autonomously after deterministic enemy and pit regressions were closed locally. Terrain `SAFE/GAP/UNKNOWN` acceptance is now complete under issue #31.
+
+V27 is the source-level experimental implementation of the remaining #32 rank/prune architecture: bounded depth-3 multi-chunk PROGRESS generation, TinySurrogateMLP top-K pruning, exact Mesen evaluation, and 4-frame receding-horizon execution while retaining V26 SURVIVE and V25 COLLECT authority. It is **not field-validated yet**; deterministic bounded-search probes are the next gate before another full live run.
