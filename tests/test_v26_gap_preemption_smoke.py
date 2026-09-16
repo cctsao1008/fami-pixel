@@ -25,6 +25,27 @@ def _load_v26():
             pass
 
 
+def _enemy_radar(dx: int, *, grounded: bool, gap=None, invincible=False):
+    return {
+        "enemies": [
+            {
+                "slot": 0,
+                "id": 0x06,
+                "state": 0,
+                "x": 1000 + int(dx),
+                "y": 176,
+                "dx": int(dx),
+            }
+        ],
+        "nearest_enemy_dx": int(dx),
+        "nearest_gap_dx": gap,
+        "nearest_obstacle_dx": None,
+        "grounded": bool(grounded),
+        "invincible": bool(invincible),
+        "objective_mode": "PROGRESS",
+    }
+
+
 def test_v26_field_regression_gap9_airborne_starts_rearm_commitment():
     v26 = _load_v26()
     v26._reset_gap_commitment()
@@ -101,6 +122,65 @@ def test_v26_commitment_survives_gap_radar_dropout_until_landing():
     )
     assert v26._gap_commit_root_frame is None
     assert after_landing is None
+
+
+def test_v26_restores_grounded_landing_zone_preemption_before_progress():
+    v26 = _load_v26()
+    v26._reset_gap_commitment()
+
+    # V26 field run generation 86 had one Goomba at dx=150 inside V20's
+    # +96..+160 landing corridor while Mario was grounded, yet V25/V23 kept a
+    # forward-model progress plan. V26 must restore the intended long re-arm.
+    plan = v26._best_v26_plan(
+        [],
+        541,
+        16,
+        80,
+        _enemy_radar(150, grounded=True),
+    )
+
+    assert plan is not None
+    assert plan["candidate"] == v26.v20.CLUSTER_JUMP.name
+    assert plan["worker"] == "landing-reactive"
+    assert "landing-zone-escape" in plan["guard_mode"]
+    assert plan["schedule"][0]["frames"] == 1
+    assert plan["schedule"][1]["frames"] == 15
+    assert v26.v23._latest_forward_meta["forward_model_status"] == "current-landing-preempt"
+
+
+def test_v26_restores_airborne_landing_zone_preemption_before_progress():
+    v26 = _load_v26()
+    v26._reset_gap_commitment()
+
+    plan = v26._best_v26_plan(
+        [],
+        565,
+        16,
+        84,
+        _enemy_radar(107, grounded=False),
+    )
+
+    assert plan is not None
+    assert plan["candidate"] == v26.v20.CLUSTER_EXTEND.name
+    assert plan["worker"] == "landing-reactive"
+    assert "landing-zone-extend" in plan["guard_mode"]
+
+
+def test_v26_current_gap_outranks_landing_enemy_preemption():
+    v26 = _load_v26()
+    v26._reset_gap_commitment()
+
+    plan = v26._best_v26_plan(
+        [],
+        1405,
+        16,
+        300,
+        _enemy_radar(120, grounded=False, gap=9),
+    )
+
+    assert plan is not None
+    assert plan["candidate"] == v26.GAP_ESCAPE_CANDIDATE
+    assert plan["worker"] == "current-terrain"
 
 
 def test_v26_grounded_predicate_accepts_elevated_supported_surface():
