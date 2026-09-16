@@ -8,9 +8,11 @@ current authoritative radar:
 
 - all forward hostile enemy slots are grouped into clusters,
 - an evidence-tunable +96..+160 px landing corridor is checked for occupancy,
-- a grounded unsafe landing corridor triggers a longer re-armed jump,
-- an airborne unsafe landing corridor keeps A+B held for a bounded extension,
+- a grounded enemy-occupied corridor triggers a longer re-armed jump,
+- an airborne enemy-occupied corridor keeps A+B held for a bounded extension,
 - reward pursuit is preempted while the landing corridor is enemy-occupied,
+- terrain SAFE / GAP / UNKNOWN is reported separately and does not silently
+  reuse the enemy-only policy,
 - V19 reward semantics, V18 watchdog, evidence capture, and leased workers stay
   intact.
 
@@ -110,9 +112,12 @@ def _landing_reason(radar: dict) -> str:
     landing_count = int(radar.get("landing_enemy_count", 0) or 0)
     corridor_start = int(radar.get("landing_corridor_start_dx", 96) or 96)
     corridor_end = int(radar.get("landing_corridor_end_dx", 160) or 160)
+    terrain = radar.get("landing_terrain_status", "UNKNOWN")
+    status = radar.get("landing_status", "UNKNOWN")
     return (
         f"enemies:{count},cluster:{cluster}@{start}..{end},"
-        f"landing:{landing_count}@{corridor_start}..{corridor_end}"
+        f"landing:{landing_count}@{corridor_start}..{corridor_end},"
+        f"terrain:{terrain},status:{status}"
     )
 
 
@@ -143,14 +148,19 @@ def best_coherent_landing_plan(
     last_applied_generation: int,
     live_radar: dict,
 ):
-    """Preempt reward/progress planning only when the landing envelope is occupied."""
+    """Preempt reward/progress only for current enemy landing occupancy.
+
+    Terrain GAP / UNKNOWN is telemetry and a prior here. Gap control belongs to
+    the dedicated terrain guard / exact forward-model path, so adding terrain
+    semantics cannot accidentally turn the enemy-cluster macro into a pit policy.
+    """
     assessment = assess_landing_zone(live_radar)
     radar = dict(live_radar)
     radar.update(assessment.to_payload())
 
     # Star capability makes ordinary enemy contact non-fatal; gaps/terrain are
-    # still handled by the V19/V16 hazard path below.
-    if assessment.landing_unsafe and not bool(radar.get("invincible", False)):
+    # handled by the terrain/forward-model path rather than this enemy macro.
+    if assessment.landing_enemy_unsafe and not bool(radar.get("invincible", False)):
         if bool(radar.get("grounded", False)):
             return _scene_plan(CLUSTER_JUMP, current_frame, radar, mode="escape")
         return _scene_plan(CLUSTER_EXTEND, current_frame, radar, mode="extend")
@@ -199,7 +209,7 @@ def _landing_publish_core(
     details["planner_state"] = (
         f"{details.get('planner_state') or 'live-radar'} | "
         f"cluster={landing['nearest_cluster_count']} "
-        f"landing={'SAFE' if landing['landing_safe'] else 'UNSAFE'}"
+        f"landing={landing['landing_status']}"
     )
     existing_reason = details.get("radar_reason")
     landing_note = _landing_reason({**radar, **landing})
@@ -249,7 +259,7 @@ def authority_main(args) -> int:
     v11._log(f"Runtime IPC : {runtime_dir}")
     v11._log(
         "Planner V20: enemy-cluster + landing-zone safety enabled | "
-        "corridor=96..160px + extended cluster jump + V19 reward/watchdog"
+        "corridor=96..160px + extended cluster jump + terrain SAFE/GAP/UNKNOWN + V19 reward/watchdog"
     )
     return v17.authority_main(args)
 
