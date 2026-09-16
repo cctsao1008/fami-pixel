@@ -43,7 +43,7 @@ from fami_pixel.games.smb1.trajectory_search import (
 from fami_pixel.learning.tiny_mlp import TinySurrogateMLP
 
 import mesen_smb_checkpoint_planner as base
-import mesen_smb_checkpoint_planner_v15 as v15
+import mesen_smb_checkpoint_planner_v11 as v11
 import mesen_smb_checkpoint_planner_v23 as v23
 import mesen_smb_checkpoint_planner_v24 as v24
 import mesen_smb_checkpoint_planner_v25 as v25
@@ -81,6 +81,7 @@ def _search_baseline_payload(
 ):
     """Evaluate only the surrogate-pruned PROGRESS frontier in exact Mesen."""
 
+    started = time.perf_counter()
     checkpoint = Path(req["checkpoint"])
     base.restore_checkpoint(core, checkpoint, root_frame, root_x, root_engine)
     start = observation_from_state(core.frame_count(), read_smb1_state(core))
@@ -97,7 +98,6 @@ def _search_baseline_payload(
         int(args.worker_count),
     )
 
-    started = time.perf_counter()
     best_result = None
     best_ranked = None
     for ranked in shard:
@@ -204,7 +204,7 @@ def _v27_schedule_label(candidate_name: str) -> str:
 
 
 def authority_main(args) -> int:
-    v23.v11._log(
+    v11._log(
         "Planner V27: bounded multi-chunk PROGRESS search enabled | "
         f"depth={SEARCH_DEPTH} top-k={SEARCH_TOP_K} surrogate rank/prune -> exact Mesen; "
         "V26 SURVIVE + V25 COLLECT remain higher authority"
