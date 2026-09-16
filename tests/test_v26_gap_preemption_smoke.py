@@ -1,5 +1,6 @@
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
+from types import SimpleNamespace
 import sys
 
 
@@ -90,7 +91,7 @@ def test_v26_commitment_survives_gap_radar_dropout_until_landing():
     assert still_committed["root_frame"] == 1405
     assert still_committed["age"] == 8
 
-    # Current authoritative grounded evidence is the only normal completion gate.
+    # Current authoritative support evidence is the normal completion gate.
     after_landing = v26._best_v26_plan(
         [],
         1464,
@@ -102,7 +103,33 @@ def test_v26_commitment_survives_gap_radar_dropout_until_landing():
     assert after_landing is None
 
 
-def test_v26_installs_after_v25_without_replacing_reward_worker():
+def test_v26_grounded_predicate_accepts_elevated_supported_surface():
+    v26 = _load_v26()
+    elevated_observation = SimpleNamespace(
+        player_state=0,
+        mario_y_high=1,
+        mario_y=128,
+        player_y_speed=0,
+    )
+    airborne_observation = SimpleNamespace(
+        player_state=1,
+        mario_y_high=1,
+        mario_y=128,
+        player_y_speed=0,
+    )
+    elevated_state = SimpleNamespace(
+        player_state=0,
+        player_y_high=1,
+        player_y=128,
+        player_y_speed=0,
+    )
+
+    assert v26._looks_grounded_observation(elevated_observation)
+    assert not v26._looks_grounded_observation(airborne_observation)
+    assert v26._grounded_from_state(elevated_state)
+
+
+def test_v26_installs_support_predicate_and_preserves_reward_worker():
     v26 = _load_v26()
     v26.v25.v24._install_v24_overrides()
     v26.v25._install_v25_overrides()
@@ -111,3 +138,5 @@ def test_v26_installs_after_v25_without_replacing_reward_worker():
     assert v26.v23._best_forward_plan is v26._best_v26_plan
     assert v26.v23.shadow_worker_main is v26.v25.shadow_worker_main
     assert v26.GAP_ESCAPE_CANDIDATE in v26.v15._JUMP_NAMES
+    assert v26.v16._looks_grounded is v26._looks_grounded_observation
+    assert v26.v20._grounded_from_state is v26._grounded_from_state
