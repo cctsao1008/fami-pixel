@@ -1,24 +1,8 @@
 # Forward-Model Trajectory Planning
 
-Fami Pixel should plan **outcomes**, not accumulate more local `if hazard -> macro` rules.
-
-The durable authority boundary is:
+Fami Pixel plans **outcomes**, not only local hazard scores.
 
 > Semantic perception proposes what matters. Learned models rank cheaply. Mesen proves what actually happens.
-
-This design is the implementation contract for GitHub issue #32.
-
-## Why change the planner
-
-The V15–V22 line proved that live native perception, parallel shadow Mesen workers, a tiny learned surrogate, watchdog recovery, evidence recording, and Windows process containment all work as useful components.
-
-It also exposed the limit of short fixed macros:
-
-- a reward can be recognized but still be ignored because every candidate mostly moves right;
-- an enemy-only landing corridor can be called safe while the real trajectory falls into a pit;
-- adding another threshold does not answer what happens at the end of a jump.
-
-The planner therefore moves from **macro scoring** toward **receding-horizon forward-model search**.
 
 ## Architecture
 
@@ -29,7 +13,7 @@ Authoritative Mesen state
 Semantic world model
   - Mario state/capabilities
   - hostile enemies/clusters
-  - terrain/gap validity
+  - terrain/gap evidence
   - reward objects/targets
         |
         v
@@ -40,7 +24,7 @@ Objective manager
 Bounded action-chunk generator
         |
         v
-Cheap learned ordering/pruning
+Cheap learned ordering / pruning
         |
         v
 Parallel Mesen save-state branches
@@ -52,46 +36,35 @@ Event-horizon trajectory evaluation
 Lexicographic outcome selection
         |
         v
-Execute only first 2-4 frames
+Execute bounded prefix / commitment
         |
         +---- observe authoritative state and replan
 ```
 
 ## Mesen is the forward model
 
-Fami Pixel already has exact native save/load-state support in the pinned Mesen CE ABI. A branch is therefore evaluated by:
+A branch is evaluated by restoring an exact authoritative checkpoint in an isolated shadow process, applying a bounded controller schedule, stepping real emulation frames, reading structured SMB1 state, and stopping on a meaningful event.
 
-1. restoring one authoritative checkpoint;
-2. applying a bounded action sequence;
-3. stepping real emulation frames;
-4. reading SMB1 structured observations and semantic radar;
-5. stopping on a meaningful event rather than an arbitrary fixed score horizon.
-
-No hand-written ballistic model is allowed to override the branch outcome.
+No hand-written ballistic approximation may override the branch result.
 
 ## Event horizon
 
-A trajectory evaluation terminates when the first authoritative event of interest occurs:
+Useful terminal/evaluation events include:
 
-- death;
-- level completion;
-- target reward collection / capability transition;
-- landing after the branch has been airborne;
-- hard maximum horizon.
+```text
+DEATH
+WIN / LEVEL_COMPLETE
+REWARD_COLLECTED
+CAPABILITY_CHANGED
+LANDED
+HORIZON_UNRESOLVED
+```
 
-A candidate may contain a short planned prefix followed by a bounded tail action (initially neutral/coast). The hard horizon prevents an unresolved branch from running indefinitely.
+`HORIZON_UNRESOLVED` is not equivalent to safe.
 
-This changes the question from:
+## Lexicographic selection
 
-> How much X progress did this macro make after 12 frames?
-
-into:
-
-> If I begin this maneuver now, do I die, land safely, collect the target, or remain unresolved?
-
-## Outcome classes
-
-Selection should be lexicographic before scalar tie-breaking. A first ordering is:
+A useful outcome ordering is:
 
 ```text
 WIN
@@ -103,129 +76,30 @@ HORIZON_UNRESOLVED
 DEATH
 ```
 
-Within the same class, progress, target-distance reduction, landing state, model risk, and compute cost may be used as tie-breakers.
+Tie-breakers may use progress, target approach, landing quality, learned risk, or compute cost. A learned estimate must never override exact Mesen evidence that another branch is safer or superior.
 
-A learned risk estimate must never override direct Mesen evidence that another trajectory is safe and superior.
+## Receding horizon and commitment
+
+Ordinary actions execute only a short prefix before replanning. This does **not** mean every control quantum may restart a safety-critical multi-frame action.
+
+A crossing or other committed maneuver keeps one root and advances schedule age across quanta until authoritative landing or explicit invalidation. Lower-priority stale results cannot break the commitment.
 
 ## Action vocabulary
 
-The old forward-only candidate pool is insufficient for interception. Keep branching bounded, but include maneuver primitives such as:
+Branching remains bounded but composable. Useful chunks include run, coast/release, short LEFT/RIGHT corrections, and A hold/release segments. Fami Pixel intentionally does not expand every NES button combination blindly.
 
-- `RIGHT+B` run;
-- `RIGHT` / coast;
-- `NOOP` / release;
-- jump press/hold/release chunks;
-- short `LEFT` / braking/backtrack chunks.
+## Terrain and landing
 
-Do not expand every possible NES button combination. Branching factor must stay explicit and measurable.
+Enemy-only landing telemetry is not terrain safety. Terrain evidence should distinguish positive support/gap knowledge from unknown state; `UNKNOWN` must not silently become safe.
 
-## Reward interception
+Exact branch outcome remains the final safety oracle when available.
 
-Reward awareness is not reward seeking until the simulated branch proves useful target interaction.
+## Regression discipline
 
-For a selected reward target, trajectory evaluation should prefer in this order:
+Development uses deterministic local save-state roots for narrow failures before replaying a full level. Example classes include first-enemy, enemy-cluster landing, pit crossing, reward interception, and stall recovery.
 
-1. authoritative collection / capability change;
-2. safe target-distance reduction;
-3. safe landing that preserves another interception opportunity;
-4. ordinary forward progress.
+A full World 1-1 run is integration evidence. It does not replace local scenario gates.
 
-Temporary loss of X progress is valid for a bounded `COLLECT` objective.
+## Current milestone
 
-The objective must be sticky for a short bounded interval so the controller does not notice a Star, choose one corrective frame, then immediately revert to pure progress.
-
-## Landing and pits
-
-The fixed `+96..160 px` enemy corridor remains useful telemetry, not final truth.
-
-True trajectory safety comes from the branch outcome:
-
-- did Mario die or enter lose-life?
-- did he become airborne and then land?
-- what was the actual landing X/Y/state?
-- was the target reward collected?
-
-Terrain radar still matters as a cheap prior and diagnostic. Its state should eventually be explicit `SAFE / GAP / UNKNOWN`; `UNKNOWN` must not silently become safe.
-
-## Learned surrogate
-
-The current tiny surrogate remains useful as a search heuristic:
-
-```text
-many candidate prefixes
-        -> tiny model ordering/pruning
-        -> top-K Mesen branches
-        -> authoritative selection
-```
-
-This is intentionally different from letting the model decide the final action.
-
-## Regression scenarios
-
-Development should stop replaying all of World 1-1 for every narrow bug. Local save states remain untracked under `build/` and define deterministic scenario roots such as:
-
-```text
-first-goomba
-multi-goomba-landing
-small-gap
-wide-gap
-pit-x2587
-staircase-stall
-star-intercept
-mushroom-intercept
-level-opening
-```
-
-Each scenario needs a machine pass condition. Examples:
-
-```text
-star-intercept:
-  star capability transition observed
-  death == false
-
-mushroom-intercept:
-  player status increased
-  death == false
-
-pit-x2587:
-  previous fatal region crossed
-  death == false
-```
-
-Save-state binaries and ROM content must remain local and untracked.
-
-## Rollout evidence
-
-For every evaluated branch, persist enough metadata to reconstruct the decision:
-
-- objective and target;
-- action chunks;
-- branch root frame/X;
-- event-horizon reason;
-- frames simulated;
-- terminal outcome;
-- start/end/max X;
-- airborne/landing evidence;
-- capability transition;
-- reward collection evidence;
-- model heuristic values;
-- selected prefix and replanning reason.
-
-## Implementation order
-
-1. **Event-horizon branch evaluator** with unit tests.
-2. **Local scenario manifest/harness** using Mesen save-state files under `build/`.
-3. **Bounded beam search** over small action chunks.
-4. Learned surrogate ordering/pruning.
-5. Parallelize branch evaluation using the existing shadow-worker/process-isolation machinery.
-6. Integrate into live receding-horizon authority with short-prefix execution.
-7. Compare beam vs best-first/A*-like vs MCTS only after the bounded baseline is measurable.
-
-## Relationship to existing tracks
-
-- #28 is the reward-interception acceptance track.
-- #30 is the multi-enemy/landing acceptance track.
-- #31 is the terrain-validity/pit acceptance track.
-- #32 owns the shared model-based planning architecture.
-
-A World 1-1 run is integration evidence, not sufficient proof by itself. Narrow deterministic scenarios must pass before a behavior is called solved.
+The V26 integration run on 2026-09-16 completed World 1-1 autonomously after deterministic enemy and pit regressions were closed locally. The broader research track remains open for richer search, terrain-validity semantics, and learned rank/prune evaluation.
