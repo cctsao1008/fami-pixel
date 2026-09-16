@@ -15,6 +15,8 @@ from fami_pixel.games.smb1.radar import (
     BLOCK_BUFFER_2,
     POWER_UP_OBJECT_ID,
     POWER_UP_SLOT,
+    TERRAIN_CURRENT,
+    TERRAIN_UNKNOWN,
     decode_smb1_radar,
 )
 
@@ -58,6 +60,53 @@ def test_radar_reports_enemy_gap_and_raised_obstacle_ahead():
     assert radar.hazard_ahead is True
     assert radar.enemies[0].enemy_id == 0x06
     assert radar.to_payload()["nearest_enemy_dx"] == 50
+
+
+def test_radar_marks_loader_margin_unknown_and_does_not_call_it_a_gap():
+    ram = bytearray(0x800)
+    player_x = 100
+    ram[ADDR_SCREEN_RIGHT_PAGE] = 0x00
+    ram[ADDR_SCREEN_RIGHT_X] = 128
+
+    _ground(ram, player_x, row=11)
+    _ground(ram, 112, row=11)
+    _ground(ram, 128, row=11)
+    # X=144 is the retained one-tile loader margin. Leave its rolling-buffer
+    # bytes zero: because it is beyond screen_right it must be UNKNOWN, not GAP.
+
+    radar = decode_smb1_radar(bytes(ram), player_x=player_x, lookahead_px=64)
+    payload = radar.to_payload()
+
+    by_x = {column.world_x: column for column in radar.columns}
+    assert by_x[112].validity == TERRAIN_CURRENT
+    assert by_x[128].validity == TERRAIN_CURRENT
+    assert by_x[144].validity == TERRAIN_UNKNOWN
+    assert by_x[144].known_gap is False
+    assert radar.nearest_gap_dx is None
+    assert radar.terrain_valid_through_x == 128
+
+    col144 = next(column for column in payload["columns"] if column["x"] == 144)
+    assert col144["validity"] == "UNKNOWN"
+    assert len(col144["collision_samples"]) == 5
+    assert all("address" in sample and "value" in sample for sample in col144["collision_samples"])
+
+
+def test_radar_column_records_surface_address_and_value():
+    ram = bytearray(0x800)
+    player_x = 100
+    ram[ADDR_SCREEN_RIGHT_PAGE] = 0x00
+    ram[ADDR_SCREEN_RIGHT_X] = 160
+    _ground(ram, player_x, row=11)
+    _ground(ram, 112, row=9, metatile=0x66)
+
+    radar = decode_smb1_radar(bytes(ram), player_x=player_x, lookahead_px=32)
+    column = next(column for column in radar.columns if column.world_x == 112)
+
+    assert column.validity == TERRAIN_CURRENT
+    assert column.surface_row == 9
+    assert column.surface_address == _block_addr(112, 9)
+    assert column.surface_value == 0x66
+    assert (_block_addr(112, 9), 0x66) in column.collision_samples
 
 
 def test_radar_ignores_defeated_enemy_slots():
