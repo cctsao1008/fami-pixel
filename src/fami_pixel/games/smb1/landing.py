@@ -1,11 +1,15 @@
 """Conservative enemy-cluster and landing-zone projection for SMB1.
 
 This module intentionally does not pretend to be an exact ballistic model.
-It projects structured enemy radar into a small, auditable heuristic used by the
-live planner to answer a narrower question: if Mario commits to a normal running
-jump now, is the empirically observed landing corridor occupied by enemies?
+It projects structured enemy radar and conservative terrain validity into a
+small, auditable heuristic used by the live planner.
 
-Mesen remains authoritative for the actual trajectory and collision outcome.
+Important boundary:
+
+- enemy occupancy is one landing hazard signal;
+- terrain support is a separate SAFE / GAP / UNKNOWN signal;
+- UNKNOWN never silently becomes SAFE;
+- exact Mesen rollout remains the final trajectory authority.
 """
 
 from __future__ import annotations
@@ -16,6 +20,15 @@ from dataclasses import dataclass
 DEFAULT_CLUSTER_GAP_PX = 48
 DEFAULT_LANDING_NEAR_PX = 96
 DEFAULT_LANDING_FAR_PX = 160
+
+TERRAIN_SAFE = "SAFE"
+TERRAIN_GAP = "GAP"
+TERRAIN_UNKNOWN = "UNKNOWN"
+
+LANDING_SAFE = "SAFE"
+LANDING_GAP = "GAP"
+LANDING_UNKNOWN = "UNKNOWN"
+LANDING_ENEMY = "UNSAFE_ENEMY"
 
 
 @dataclass(frozen=True)
@@ -39,14 +52,43 @@ class LandingZoneAssessment:
     landing_far_px: int
     landing_enemy_count: int
     landing_enemy_dxs: tuple[int, ...]
+    terrain_status: str
+    terrain_sample_count: int
+    terrain_valid_sample_count: int
+    terrain_gap_dxs: tuple[int, ...]
+    terrain_unknown_dxs: tuple[int, ...]
 
     @property
-    def landing_safe(self) -> bool:
+    def landing_enemy_clear(self) -> bool:
         return self.landing_enemy_count == 0
 
     @property
+    def landing_enemy_unsafe(self) -> bool:
+        return self.landing_enemy_count > 0
+
+    @property
+    def landing_status(self) -> str:
+        if self.landing_enemy_unsafe:
+            return LANDING_ENEMY
+        if self.terrain_status == TERRAIN_GAP:
+            return LANDING_GAP
+        if self.terrain_status == TERRAIN_SAFE:
+            return LANDING_SAFE
+        return LANDING_UNKNOWN
+
+    @property
+    def landing_safe(self) -> bool:
+        """True only when both enemy occupancy and terrain support are known safe."""
+        return self.landing_status == LANDING_SAFE
+
+    @property
     def landing_unsafe(self) -> bool:
-        return not self.landing_safe
+        """Known unsafe. UNKNOWN is intentionally neither safe nor unsafe."""
+        return self.landing_status in {LANDING_ENEMY, LANDING_GAP}
+
+    @property
+    def landing_unknown(self) -> bool:
+        return self.landing_status == LANDING_UNKNOWN
 
     def to_payload(self) -> dict:
         nearest = self.nearest_cluster
@@ -61,8 +103,17 @@ class LandingZoneAssessment:
             "landing_corridor_end_dx": self.landing_far_px,
             "landing_enemy_count": self.landing_enemy_count,
             "landing_enemy_dxs": list(self.landing_enemy_dxs),
+            "landing_enemy_clear": self.landing_enemy_clear,
+            "landing_enemy_unsafe": self.landing_enemy_unsafe,
+            "landing_terrain_status": self.terrain_status,
+            "landing_terrain_sample_count": self.terrain_sample_count,
+            "landing_terrain_valid_sample_count": self.terrain_valid_sample_count,
+            "landing_terrain_gap_dxs": list(self.terrain_gap_dxs),
+            "landing_terrain_unknown_dxs": list(self.terrain_unknown_dxs),
+            "landing_status": self.landing_status,
             "landing_safe": self.landing_safe,
             "landing_unsafe": self.landing_unsafe,
+            "landing_unknown": self.landing_unknown,
         }
 
 
@@ -109,6 +160,64 @@ def cluster_forward_enemies(
     )
 
 
+def _terrain_corridor_status(
+    radar: dict,
+    *,
+    landing_near_px: int,
+    landing_far_px: int,
+) -> tuple[str, int, int, tuple[int, ...], tuple[int, ...]]:
+    """Classify projected landing terrain as SAFE / GAP / UNKNOWN.
+
+    Positive SAFE requires complete current coverage through the far edge of the
+    landing corridor. A short lookahead or any explicitly UNKNOWN sampled column
+    keeps the result UNKNOWN. Known empty current columns are GAP.
+    """
+
+    columns = []
+    for column in radar.get("columns") or ():
+        if not isinstance(column, dict):
+            continue
+        try:
+            dx = int(column.get("dx"))
+        except (TypeError, ValueError):
+            continue
+        if landing_near_px <= dx <= landing_far_px:
+            columns.append((dx, column))
+
+    try:
+        lookahead_px = int(radar.get("lookahead_px", 0) or 0)
+    except (TypeError, ValueError):
+        lookahead_px = 0
+
+    gap_dxs: list[int] = []
+    unknown_dxs: list[int] = []
+    valid_count = 0
+    for dx, column in columns:
+        validity = str(column.get("validity", "UNKNOWN")).upper()
+        if validity != "CURRENT":
+            unknown_dxs.append(dx)
+            continue
+        valid_count += 1
+        if column.get("surface_row") is None:
+            gap_dxs.append(dx)
+
+    if gap_dxs:
+        return TERRAIN_GAP, len(columns), valid_count, tuple(gap_dxs), tuple(unknown_dxs)
+
+    # SAFE requires the corridor's far edge to be inside current validated
+    # lookahead, at least one sample in the corridor, and every sampled column
+    # there to be current. Anything less is UNKNOWN rather than optimistic SAFE.
+    if (
+        lookahead_px >= landing_far_px
+        and columns
+        and valid_count == len(columns)
+        and not unknown_dxs
+    ):
+        return TERRAIN_SAFE, len(columns), valid_count, (), ()
+
+    return TERRAIN_UNKNOWN, len(columns), valid_count, (), tuple(unknown_dxs)
+
+
 def assess_landing_zone(
     radar: dict,
     *,
@@ -116,7 +225,7 @@ def assess_landing_zone(
     landing_near_px: int = DEFAULT_LANDING_NEAR_PX,
     landing_far_px: int = DEFAULT_LANDING_FAR_PX,
 ) -> LandingZoneAssessment:
-    """Assess whether forward enemies occupy the conservative landing corridor."""
+    """Assess enemy occupancy and terrain validity in the landing corridor."""
     if landing_near_px < 0:
         raise ValueError("landing_near_px must be >= 0")
     if landing_far_px < landing_near_px:
@@ -125,6 +234,11 @@ def assess_landing_zone(
     dxs = _forward_enemy_dxs(radar)
     clusters = cluster_forward_enemies(radar, cluster_gap_px=cluster_gap_px)
     landing = tuple(dx for dx in dxs if landing_near_px <= dx <= landing_far_px)
+    terrain = _terrain_corridor_status(
+        radar,
+        landing_near_px=landing_near_px,
+        landing_far_px=landing_far_px,
+    )
     return LandingZoneAssessment(
         forward_enemy_count=len(dxs),
         clusters=clusters,
@@ -133,4 +247,9 @@ def assess_landing_zone(
         landing_far_px=int(landing_far_px),
         landing_enemy_count=len(landing),
         landing_enemy_dxs=landing,
+        terrain_status=terrain[0],
+        terrain_sample_count=terrain[1],
+        terrain_valid_sample_count=terrain[2],
+        terrain_gap_dxs=terrain[3],
+        terrain_unknown_dxs=terrain[4],
     )
