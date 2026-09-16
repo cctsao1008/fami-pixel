@@ -1,12 +1,12 @@
 """Action-lineage contracts for asynchronous SMB1 Mesen branch proofs.
 
-An exact Mesen result is rooted in a historical authoritative state.  Once the
+An exact Mesen result is rooted in a historical authoritative state. Once the
 live authority has advanced, source age alone does not make that proof reusable:
 the authority must have executed exactly the same input prefix as the candidate.
 If the lineages diverge, the simulated branch no longer describes the current
 state and must be rejected rather than rebased to age zero.
 
-This module deliberately knows nothing about candidate ranking.  It answers only
+This module deliberately knows nothing about candidate ranking. It answers only
 whether a branch proof is still reachable from the live authority history and
 whether enough exact-Mesen horizon remains to cover the next commitment.
 """
@@ -32,7 +32,7 @@ class AuthorityActionLedger:
     """Bounded frame->buttons ledger for actions actually applied by authority.
 
     A key ``f`` records the final NES buttons used for the authoritative
-    transition ``f -> f+1``.  Re-recording the same frame replaces the value,
+    transition ``f -> f+1``. Re-recording the same frame replaces the value,
     which matches controller semantics if a caller changes the pad state more
     than once before stepping the emulator.
     """
@@ -100,6 +100,7 @@ def validate_branch_proof(
     ledger: AuthorityActionLedger,
     current_frame: int,
     commit_frames: int,
+    safety_field: str = "trajectory_safe_resolved",
 ) -> BranchProofValidation:
     """Validate reachability and remaining exact proof for one stale branch.
 
@@ -107,14 +108,19 @@ def validate_branch_proof(
 
         actual_buttons[root:current] == candidate_buttons[0:source_age]
         trajectory_frames - source_age >= commit_frames
+        proof[safety_field] is true
 
-    ``trajectory_safe_resolved`` is also required because lineage can preserve a
-    branch that Mesen resolved as death/unknown; reachability never upgrades the
-    semantic outcome.
+    PROGRESS proofs normally use ``trajectory_safe_resolved``. Bounded COLLECT
+    proofs use ``reward_prefix_safe`` because an exact alive reward prefix may
+    intentionally terminate at a finite proof horizon without a terminal game
+    event. The caller chooses the semantic safety bit; lineage and lease rules
+    are identical.
     """
 
     if commit_frames <= 0:
         raise ValueError("commit_frames must be > 0")
+    if not safety_field:
+        raise ValueError("safety_field must be non-empty")
 
     try:
         root_frame = int(proof["root_frame"])
@@ -128,7 +134,7 @@ def validate_branch_proof(
         return BranchProofValidation(
             False, "future-root", source_age, 0, proof_remaining
         )
-    if not bool(proof.get("trajectory_safe_resolved", False)):
+    if not bool(proof.get(safety_field, False)):
         return BranchProofValidation(
             False, "not-safe-resolved", source_age, 0, proof_remaining
         )
