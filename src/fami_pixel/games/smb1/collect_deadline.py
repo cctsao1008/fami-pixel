@@ -12,7 +12,9 @@ This cache extends :class:`CollectResponseCache` with one conservative rule:
 
 The observation frame is measured on the authoritative native-frame clock, not
 worker wall time.  Worker ``compute_ms`` remains useful telemetry but never
-certifies deadline admission.
+certifies deadline admission. Timing observations outlive policy consumption for
+one retention window so late workers can still be diagnosed after authority has
+already committed a generation.
 """
 
 from __future__ import annotations
@@ -79,7 +81,7 @@ class DeadlineCollectResponseCache(CollectResponseCache):
             key = self._identity(response)
             if key is None:
                 continue
-            generation, root_frame, _worker = key
+            _generation, root_frame, _worker = key
             if key not in self._first_seen_frame:
                 self._first_seen_frame[key] = int(current_frame)
                 self._target_type[key] = str(target_type)
@@ -108,15 +110,14 @@ class DeadlineCollectResponseCache(CollectResponseCache):
             target_type=target_type,
         )
 
-        # ``CollectResponseCache`` can only purge responses it admitted.  Late
-        # observations live solely in our timing tables, so retire those using
-        # the same generation/age/target lifecycle explicitly.
+        # ``CollectResponseCache`` purges consumed policy entries immediately.
+        # Keep first-observation timing until its age/target retention expires so
+        # a worker that arrives after commitment can still be diagnosed as late.
         for key in list(self._first_seen_frame):
-            generation, root_frame, _worker = key
+            _generation, root_frame, _worker = key
             age = int(current_frame) - int(root_frame)
             if (
-                generation <= int(last_applied_generation)
-                or age < 0
+                age < 0
                 or age > int(retention_frames)
                 or self._target_type.get(key) != str(target_type)
             ):
@@ -196,3 +197,34 @@ class DeadlineCollectResponseCache(CollectResponseCache):
                 None if quorum_age is None else int(self.deadline_frames) - int(quorum_age)
             ),
         }
+
+    def recent_deadline_misses(self, *, limit: int = 16) -> list[dict]:
+        """Return recent late-worker observations for timeline diagnostics."""
+
+        if int(limit) <= 0:
+            return []
+        items: list[dict] = []
+        for key, arrival_age in self._late_arrival_age.items():
+            generation, root_frame, worker = key
+            item = {
+                "generation": int(generation),
+                "root_frame": int(root_frame),
+                "worker": int(worker),
+                "arrival_age_frames": int(arrival_age),
+                "deadline_frames": int(self.deadline_frames),
+                "deadline_slack_frames": int(self.deadline_frames) - int(arrival_age),
+            }
+            if key in self._worker_compute_ms:
+                item["compute_ms"] = float(self._worker_compute_ms[key])
+            if key in self._worker_exact_steps:
+                item["exact_frame_steps"] = int(self._worker_exact_steps[key])
+            items.append(item)
+        items.sort(
+            key=lambda item: (
+                int(item["generation"]),
+                int(item["root_frame"]),
+                int(item["worker"]),
+            ),
+            reverse=True,
+        )
+        return items[: int(limit)]
