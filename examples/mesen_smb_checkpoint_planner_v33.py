@@ -12,10 +12,11 @@ when authority first observes it on the native-frame clock.  Responses first
 observed at or before the latest useful handoff are admitted; later responses are
 kept only as latency telemetry and can never enter ranking for that root.
 
-This layer also exposes per-worker arrival age, deadline slack, compute time, and
-exact-frame-step counters through V23 timeline metadata.  The policy below the
-admission gate remains V32: full quorum before the deadline, partial closure at
-the deadline, then action-lineage + proof-lease + reward ranking.
+This layer also exposes per-worker arrival age, deadline slack, compute time,
+exact-frame-step counters, and recent deadline misses through V23 timeline
+metadata. The policy below the admission gate remains V32: full quorum before
+the deadline, partial closure at the deadline, then action-lineage + proof-lease
++ reward ranking.
 """
 
 from __future__ import annotations
@@ -58,6 +59,7 @@ def _timing_fields(
         return {
             "collect_deadline_admission": "authority-first-seen<=deadline",
             "collect_deadline_frames": int(_DEADLINE_FRAMES),
+            "collect_recent_deadline_misses": _DEADLINE_CACHE.recent_deadline_misses(),
         }
 
     timing = _DEADLINE_CACHE.timing_snapshot(
@@ -79,6 +81,7 @@ def _timing_fields(
         "collect_missing_on_time_workers": timing["missing_on_time_workers"],
         "collect_quorum_arrival_age_frames": timing["quorum_arrival_age_frames"],
         "collect_quorum_deadline_margin_frames": timing["quorum_deadline_margin_frames"],
+        "collect_recent_deadline_misses": _DEADLINE_CACHE.recent_deadline_misses(),
     }
 
 
