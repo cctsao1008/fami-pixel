@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""V26 live planner: current-terrain gap escape outranks stale progress.
+"""V26 live planner: current-scene survival outranks stale progress.
 
 The V25 field run reproduced the long-standing World 1-1 pit failure. Current
 authoritative radar already reported a near gap while Mario was airborne, but
@@ -11,8 +11,8 @@ The first V26 draft tried a 4-frame RIGHT+A+B extension. The deterministic
 re-armed short/long jumps from the exact same frame/X/Y state landed safely.
 
 V26 therefore uses a stateful SURVIVE commitment instead of repeatedly making a
-one-quantum decision. Once a current near-gap observation catches Mario airborne,
-authority starts the exact re-arm long-jump schedule:
+one-quantum decision. A current near-gap observation starts the exact re-arm
+long-jump schedule:
 
     RIGHT+B 1f -> RIGHT+A+B 15f -> RIGHT+B tail
 
@@ -35,6 +35,17 @@ preemption and kept a stale progress trajectory until Mario landed almost on top
 of the Goomba. V26 now restores that policy explicitly in its selector ordering:
 current gap commitment first, then current landing-zone enemy preemption, then
 reward/progress planning.
+
+The next V26 field run exposed a fourth composition bug at the first real gap.
+At frame 677/X1028 the grounded live-radar layer started a jump for gap=76. Four
+frames later, once Mario was airborne, V26 started a *new* re-arm commitment at
+frame 681. The same handoff repeated after landing near the lip: frame 705/X1098
+started the grounded emergency jump, then frame 709/X1108 restarted the schedule
+in mid-air. That second A-release occurred after Mario had already left support;
+he fell into the pit and the commitment remained stuck until death. V26 now owns
+both grounded and airborne near-gap starts itself, so the original grounded root
+is retained across the transition and the re-arm sequence cannot restart merely
+because control moved from V17's emergency layer into V26.
 
 This is scene-driven, not a World 1-1 coordinate script. ``gap=None`` is still
 UNKNOWN rather than SAFE, so a temporary terrain-radar dropout cannot cancel an
@@ -65,6 +76,7 @@ _BASE_V25_PLAN = v25._best_v25_plan
 
 _gap_commit_root_frame: int | None = None
 _gap_commit_trigger_dx: int | None = None
+_gap_commit_trigger_grounded: bool | None = None
 
 
 def _looks_grounded_observation(observation) -> bool:
@@ -88,15 +100,17 @@ def _grounded_from_state(state) -> bool:
 
 
 def _reset_gap_commitment() -> None:
-    global _gap_commit_root_frame, _gap_commit_trigger_dx
+    global _gap_commit_root_frame, _gap_commit_trigger_dx, _gap_commit_trigger_grounded
     _gap_commit_root_frame = None
     _gap_commit_trigger_dx = None
+    _gap_commit_trigger_grounded = None
 
 
-def _start_gap_commitment(current_frame: int, gap_dx: int) -> None:
-    global _gap_commit_root_frame, _gap_commit_trigger_dx
+def _start_gap_commitment(current_frame: int, gap_dx: int, *, grounded: bool) -> None:
+    global _gap_commit_root_frame, _gap_commit_trigger_dx, _gap_commit_trigger_grounded
     _gap_commit_root_frame = int(current_frame)
     _gap_commit_trigger_dx = int(gap_dx)
+    _gap_commit_trigger_grounded = bool(grounded)
 
 
 def _gap_commitment_active(current_frame: int, live_radar: dict) -> bool:
@@ -122,6 +136,7 @@ def _gap_commitment_active(current_frame: int, live_radar: dict) -> bool:
 def _gap_escape_plan(current_frame: int, live_radar: dict) -> dict:
     assert _gap_commit_root_frame is not None
     assert _gap_commit_trigger_dx is not None
+    assert _gap_commit_trigger_grounded is not None
 
     current_gap = live_radar.get("nearest_gap_dx")
     try:
@@ -130,6 +145,7 @@ def _gap_escape_plan(current_frame: int, live_radar: dict) -> dict:
         current_gap_dx = None
 
     age = max(0, int(current_frame) - int(_gap_commit_root_frame))
+    trigger_mode = "grounded" if _gap_commit_trigger_grounded else "airborne"
     return {
         "generation": -1,
         "worker": "current-terrain",
@@ -146,12 +162,12 @@ def _gap_escape_plan(current_frame: int, live_radar: dict) -> dict:
         "guard_mode": (
             "current-gap-rearm-commit["
             f"trigger:{int(_gap_commit_trigger_dx)},"
-            f"current:{current_gap_dx},age:{age}f]"
+            f"from:{trigger_mode},current:{current_gap_dx},age:{age}f]"
         ),
         "live_radar": dict(live_radar or {}),
         "terrain_gap_dx": current_gap_dx,
         "terrain_gap_trigger_dx": int(_gap_commit_trigger_dx),
-        "terrain_guard": "airborne-rearm-commit",
+        "terrain_guard": f"{trigger_mode}-rearm-commit",
     }
 
 
@@ -204,8 +220,12 @@ def _best_v26_plan(
         return result
 
     gap = near_gap_guard(live_radar, trigger_px=v15.RADAR_GAP_TRIGGER_PX)
-    if gap is not None and gap.mode == "airborne-rearm-commit":
-        _start_gap_commitment(current_frame, gap.gap_dx)
+    if gap is not None:
+        # Own the *grounded* start as well as airborne continuation. Delegating
+        # grounded gaps to V17 caused a layer handoff: V17 started a re-arm jump,
+        # then V26 restarted another re-arm four frames later in mid-air. The
+        # 2026-09-16 X1108 failure is the exact regression for this rule.
+        _start_gap_commitment(current_frame, gap.gap_dx, grounded=gap.grounded)
         return _best_v26_plan(
             response_paths,
             current_frame,
@@ -214,19 +234,12 @@ def _best_v26_plan(
             live_radar,
         )
 
-    # The V26 field run showed that V20 landing telemetry remained present while
-    # its actual preemption policy had been bypassed by the V23/V25 selector
-    # replacement. Restore current landing-zone safety here, below current gap
-    # survival but above asynchronous COLLECT/PROGRESS responses.
+    # Current landing-zone safety sits below positive gap evidence but above
+    # asynchronous COLLECT/PROGRESS responses.
     landing_plan = _landing_preemption_plan(current_frame, live_radar)
     if landing_plan is not None:
         return landing_plan
 
-    # Grounded near-gap cases intentionally delegate. V17/V16's current-radar
-    # authority loop already replaces a non-jump result with its re-arm emergency
-    # jump. V26 patches V16's grounded predicate so elevated support is included.
-    # If that jump reaches a near-gap airborne state on the next quantum, this
-    # layer takes over and keeps the crossing committed until the next support.
     return _BASE_V25_PLAN(
         response_paths,
         current_frame,
@@ -246,7 +259,7 @@ def authority_main(args) -> int:
     _reset_gap_commitment()
     v11._log(
         "Planner V26: current scene SURVIVE guards enabled | "
-        f"gap<={v15.RADAR_GAP_TRIGGER_PX}px airborne=rearm+15f hold; "
+        f"gap<={v15.RADAR_GAP_TRIGGER_PX}px grounded/airborne single-root rearm+15f hold; "
         "landing corridor enemy preemption restored"
     )
     return _BASE_V25_AUTHORITY(args)
