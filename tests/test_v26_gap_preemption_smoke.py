@@ -89,6 +89,66 @@ def test_v26_does_not_restart_rearm_each_control_quantum():
     assert second["candidate"] == v26.GAP_ESCAPE_CANDIDATE
 
 
+def test_v26_grounded_gap_owns_root_before_airborne_handoff():
+    v26 = _load_v26()
+    v26._reset_gap_commitment()
+
+    # 2026-09-16 field regression: at frame 677/X1028 the old composition
+    # delegated gap=76 while grounded to V17, then V26 restarted a new re-arm at
+    # frame 681 once airborne. Own the original grounded root instead.
+    grounded_start = v26._best_v26_plan(
+        [],
+        677,
+        16,
+        119,
+        {"nearest_gap_dx": 76, "grounded": True, "objective_mode": "PROGRESS"},
+    )
+    airborne_follow = v26._best_v26_plan(
+        [],
+        681,
+        16,
+        120,
+        {"nearest_gap_dx": 66, "grounded": False, "objective_mode": "PROGRESS"},
+    )
+
+    assert grounded_start["candidate"] == v26.GAP_ESCAPE_CANDIDATE
+    assert grounded_start["root_frame"] == 677
+    assert grounded_start["age"] == 0
+    assert grounded_start["terrain_guard"] == "grounded-rearm-commit"
+    assert airborne_follow["candidate"] == v26.GAP_ESCAPE_CANDIDATE
+    assert airborne_follow["root_frame"] == 677
+    assert airborne_follow["age"] == 4
+    assert airborne_follow["terrain_gap_trigger_dx"] == 76
+    assert "from:grounded" in airborne_follow["guard_mode"]
+
+
+def test_v26_grounded_lip_rearm_does_not_restart_next_quantum():
+    v26 = _load_v26()
+    v26._reset_gap_commitment()
+
+    # Fatal run: frame 705/X1098 gap=6 started V17 emergency; frame 709/X1108
+    # started another re-arm in mid-air and Mario fell. V26 must keep frame705.
+    first = v26._best_v26_plan(
+        [],
+        705,
+        16,
+        126,
+        {"nearest_gap_dx": 6, "grounded": True, "objective_mode": "PROGRESS"},
+    )
+    next_quantum = v26._best_v26_plan(
+        [],
+        709,
+        16,
+        127,
+        {"nearest_gap_dx": 12, "grounded": False, "objective_mode": "PROGRESS"},
+    )
+
+    assert first["root_frame"] == 705
+    assert next_quantum["root_frame"] == 705
+    assert next_quantum["age"] == 4
+    assert next_quantum["terrain_guard"] == "grounded-rearm-commit"
+
+
 def test_v26_commitment_survives_gap_radar_dropout_until_landing():
     v26 = _load_v26()
     v26._reset_gap_commitment()
