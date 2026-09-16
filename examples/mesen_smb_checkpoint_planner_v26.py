@@ -28,6 +28,14 @@ for both the V16 emergency path and the V20 landing/radar payload: Player_State=
 normal Y page, and zero signed vertical speed. Elevated pipes/blocks therefore
 count as supported landings without weakening the airborne guard.
 
+The first V26 field run exposed a third composition bug before any reward became
+active. V20 telemetry correctly reported an enemy inside the +96..+160 landing
+corridor, but V23/V25's forward-model selector path bypassed V20's landing-zone
+preemption and kept a stale progress trajectory until Mario landed almost on top
+of the Goomba. V26 now restores that policy explicitly in its selector ordering:
+current gap commitment first, then current landing-zone enemy preemption, then
+reward/progress planning.
+
 This is scene-driven, not a World 1-1 coordinate script. ``gap=None`` is still
 UNKNOWN rather than SAFE, so a temporary terrain-radar dropout cannot cancel an
 already-started crossing commitment.
@@ -147,6 +155,31 @@ def _gap_escape_plan(current_frame: int, live_radar: dict) -> dict:
     }
 
 
+def _landing_preemption_plan(current_frame: int, live_radar: dict) -> dict | None:
+    """Restore V20's enemy landing-corridor policy ahead of reward/progress."""
+
+    assessment = v20.assess_landing_zone(live_radar)
+    if not assessment.landing_unsafe or bool(live_radar.get("invincible", False)):
+        return None
+
+    radar = dict(live_radar)
+    radar.update(assessment.to_payload())
+    grounded = bool(radar.get("grounded", False))
+    candidate = v20.CLUSTER_JUMP if grounded else v20.CLUSTER_EXTEND
+    mode = "escape" if grounded else "extend"
+    result = v20._scene_plan(candidate, current_frame, radar, mode=mode)
+    v23._latest_forward_meta = {
+        "forward_model_status": "current-landing-preempt",
+        "objective_mode": "SURVIVE",
+        "forward_model_plan": candidate.name,
+        "forward_model_event": "enemy-landing-corridor",
+        "landing_enemy_count": int(assessment.landing_enemy_count),
+        "landing_enemy_dxs": list(assessment.landing_enemy_dxs),
+        "landing_guard": mode,
+    }
+    return result
+
+
 def _best_v26_plan(
     response_paths,
     current_frame: int,
@@ -154,7 +187,7 @@ def _best_v26_plan(
     last_applied_generation: int,
     live_radar: dict,
 ):
-    """Prioritize a current/sticky gap crossing over stale async output."""
+    """Apply current scene safety before asynchronous reward/progress output."""
 
     if _gap_commitment_active(current_frame, live_radar):
         result = _gap_escape_plan(current_frame, live_radar)
@@ -181,6 +214,14 @@ def _best_v26_plan(
             live_radar,
         )
 
+    # The V26 field run showed that V20 landing telemetry remained present while
+    # its actual preemption policy had been bypassed by the V23/V25 selector
+    # replacement. Restore current landing-zone safety here, below current gap
+    # survival but above asynchronous COLLECT/PROGRESS responses.
+    landing_plan = _landing_preemption_plan(current_frame, live_radar)
+    if landing_plan is not None:
+        return landing_plan
+
     # Grounded near-gap cases intentionally delegate. V17/V16's current-radar
     # authority loop already replaces a non-jump result with its re-arm emergency
     # jump. V26 patches V16's grounded predicate so elevated support is included.
@@ -204,8 +245,9 @@ def _v26_schedule_label(candidate_name: str) -> str:
 def authority_main(args) -> int:
     _reset_gap_commitment()
     v11._log(
-        "Planner V26: current near-gap SURVIVE commitment enabled | "
-        f"gap<={v15.RADAR_GAP_TRIGGER_PX}px airborne=rearm+15f hold; keep root until support"
+        "Planner V26: current scene SURVIVE guards enabled | "
+        f"gap<={v15.RADAR_GAP_TRIGGER_PX}px airborne=rearm+15f hold; "
+        "landing corridor enemy preemption restored"
     )
     return _BASE_V25_AUTHORITY(args)
 
@@ -226,7 +268,7 @@ def _install_v26_overrides() -> None:
 
 def main() -> int:
     # Preserve all V24/V25 process, reward, landing, watchdog, and evidence
-    # layers; replace only the final live selector ordering around current gaps.
+    # layers; V26 composes current gap + landing safety ahead of reward/progress.
     v25.v24._install_v24_overrides()
     v25._install_v25_overrides()
     _install_v26_overrides()
