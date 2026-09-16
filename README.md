@@ -1,10 +1,39 @@
-# Fami Pixel
+<p align="center">
+  <img src="docs/assets/fami-mascot.svg" width="280" alt="Fami mascot">
+</p>
 
-A deterministic machine-control research platform for Famicom / NES games.
+<h1 align="center">Fami Pixel</h1>
+
+<p align="center">
+  <strong>Deterministic machine-control research for Famicom / NES games</strong>
+</p>
+
+<p align="center">
+  <strong>Observe. Simulate. Commit. Replan.</strong>
+</p>
+
+<p align="center">
+  <em>See the pixels. Simulate the future. Don't fall in the same pit twice.</em>
+</p>
 
 > Let Python see the game, understand the world, and control the player.
 
 The first workload is **Super Mario Bros.** running on **Mesen CE**. Fami Pixel uses native emulator state, direct controller input, deterministic frame stepping, save-state branching, and evidence-driven planning without modifying the game ROM.
+
+## Meet Fami
+
+**Fami** is the fami-pixel mascot: a playful retro-game scout that treats every failure as another rollout to learn from.
+
+| Trait | Fami |
+|---|---|
+| Personality | Mischievous, competitive, observant, and perfectly willing to turn a failed run into a joke |
+| Interests | Retro games, platformers, RL, radar, game AI, save-state futures |
+| Special move | Look at the live scene, simulate multiple futures, then commit to the one that actually survives |
+| Favorite battle cry | `One more rollout!` / `Mesen says NO.` / `XDDDDD` |
+| Zodiac | **Sagittarius** |
+| Natural enemies | stale plans, `UNKNOWN == SAFE`, and dying in the same pit twice |
+
+> **"I've seen eight futures. Seven end in a pit. Let's take the eighth." — Fami**
 
 ## Current milestone
 
