@@ -1,0 +1,28 @@
+name: LSMM Substrate Port
+
+on:
+  push:
+    branches: [lsmm]
+    paths:
+      - "src/fami_pixel/integration/**"
+      - "tests/test_external_substrate_port.py"
+      - ".github/workflows/lsmm-substrate-port.yml"
+  pull_request:
+    paths:
+      - "src/fami_pixel/integration/**"
+      - "tests/test_external_substrate_port.py"
+      - ".github/workflows/lsmm-substrate-port.yml"
+  workflow_dispatch:
+
+jobs:
+  substrate-port:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test dependencies
+        run: python -m pip install -e ".[test]"
+      - name: Run external substrate port tests
+        run: python -m pytest -q tests/test_external_substrate_port.py
