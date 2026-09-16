@@ -12,6 +12,14 @@ same state landed safely. The live guard therefore exposes a re-arm + sustained-
 escape schedule. The caller is responsible for keeping that schedule rooted at
 the original commitment frame until authoritative landing evidence clears it.
 
+A second deterministic root at generation 295 exposed a semantic mismatch in
+the old live ``grounded`` heuristic: Mesen produced a real Player_State 1->0
+landing at Y=128, while the live heuristic required Y>=160 and therefore would
+have kept the crossing commitment active after an elevated-surface landing.
+``player_support_grounded`` centralizes the stronger game-state contract used by
+V26: Player_State=0, normal Y page, and zero vertical speed. It intentionally
+does not require floor-level Y, so pipes/blocks can terminate a crossing too.
+
 Mesen remains transition authority. ``nearest_gap_dx is None`` is never promoted
 to SAFE here; once a crossing commitment starts, a temporary radar dropout is
 insufficient reason to hand control back to stale asynchronous progress output.
@@ -33,6 +41,34 @@ class TerrainGapGuard:
     gap_dx: int
     grounded: bool
     mode: str
+
+
+def _signed_u8(value: int) -> int:
+    raw = int(value) & 0xFF
+    return raw - 0x100 if raw & 0x80 else raw
+
+
+def player_support_grounded(
+    *,
+    player_state: int,
+    player_y_high: int,
+    player_y_speed: int,
+) -> bool:
+    """Return SMB1 support evidence without assuming ground-floor Y.
+
+    ``Player_State`` is the same native state already used by the event layer:
+    0 is normal left/right movement and 1 is jumping/falling. Requiring state 0,
+    the normal playfield Y page, and zero signed vertical speed recognizes both
+    ordinary ground and elevated solid support. The previous Y>=160 shortcut
+    missed valid landings on higher terrain and could keep a SURVIVE commitment
+    alive after Mesen had already transitioned back to supported movement.
+    """
+
+    return (
+        int(player_state) == 0
+        and int(player_y_high) == 1
+        and _signed_u8(player_y_speed) == 0
+    )
 
 
 def near_gap_guard(
