@@ -104,3 +104,31 @@ def test_missing_authority_history_fails_closed():
 
     assert result.valid is False
     assert result.reason == "authority-ledger-gap"
+
+
+def test_collect_prefix_can_use_reward_safety_bit_without_laundering_progress_semantics():
+    ledger = AuthorityActionLedger()
+    proof = _proof(frames=24, schedule=[{"buttons": 0x82, "frames": 24}])
+    proof["trajectory_safe_resolved"] = False
+    proof["reward_prefix_safe"] = True
+    _record_matching(ledger, proof, current_frame=208)
+
+    progress_result = validate_branch_proof(
+        proof,
+        ledger=ledger,
+        current_frame=208,
+        commit_frames=4,
+    )
+    collect_result = validate_branch_proof(
+        proof,
+        ledger=ledger,
+        current_frame=208,
+        commit_frames=4,
+        safety_field="reward_prefix_safe",
+    )
+
+    assert progress_result.valid is False
+    assert progress_result.reason == "not-safe-resolved"
+    assert collect_result.valid is True
+    assert collect_result.source_age == 8
+    assert collect_result.proof_remaining_frames == 16
