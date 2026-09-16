@@ -59,6 +59,11 @@ def test_worker_first_seen_after_deadline_is_rejected_permanently():
     assert timing["late_workers"] == [2]
     assert timing["missing_on_time_workers"] == [2]
     assert timing["worker_deadline_slack_frames"]["2"] == -4
+    misses = cache.recent_deadline_misses()
+    assert misses[0]["worker"] == 2
+    assert misses[0]["arrival_age_frames"] == 16
+    assert misses[0]["deadline_slack_frames"] == -4
+    assert misses[0]["compute_ms"] == 99.0
 
 
 def test_worker_first_seen_at_deadline_is_on_time():
@@ -86,12 +91,14 @@ def test_worker_first_seen_at_deadline_is_on_time():
     assert timing["late_workers"] == []
 
 
-def test_timing_state_is_purged_when_generation_is_consumed():
+def test_policy_state_is_purged_but_timing_survives_generation_consumption():
     cache = DeadlineCollectResponseCache(deadline_frames=12)
     _ingest(cache, [_response(worker=0)], frame=204)
 
     _ingest(cache, [_response(worker=0)], frame=208, last=20)
 
+    # Policy cannot reconsider generation 20, but its timing evidence remains
+    # until the root leaves the retention window.
     assert cache.groups() == {}
     timing = cache.timing_snapshot(
         generation=20,
@@ -99,5 +106,14 @@ def test_timing_state_is_purged_when_generation_is_consumed():
         current_frame=208,
         expected_workers=3,
     )
+    assert timing["worker_arrival_age_frames"] == {"0": 4}
+    assert timing["on_time_workers"] == [0]
+
+    _ingest(cache, [], frame=225, last=20, retention=24)
+    timing = cache.timing_snapshot(
+        generation=20,
+        root_frame=200,
+        current_frame=225,
+        expected_workers=3,
+    )
     assert timing["worker_arrival_age_frames"] == {}
-    assert timing["unseen_workers"] == [0, 1, 2]
