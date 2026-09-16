@@ -144,12 +144,21 @@ The project follows a simple documentation rule:
 
 > **README explains the system. Issues explain the journey. Code proves the current state.**
 
-## Design notes
+## Documentation
 
-- [Forward-model trajectory planning](docs/architecture/forward-model-trajectory-planning.md) — outcome-oriented receding-horizon planning with Mesen as the exact forward model.
-- [Reward-aware SMB1 planning](docs/architecture/reward-aware-planning.md) — separate hazard avoidance from state-dependent power-up pursuit while keeping Mesen authoritative.
-- [SMB1 environment contract](docs/smb1-environment-contract.md) — game-specific observation and control semantics.
-- [Mesen interop](docs/mesen-interop.md) — native emulator boundary used by the Python research layer.
+Start with the [documentation authority map](docs/README.md).
+
+Current durable design notes:
+
+- [System architecture](docs/architecture/system.md)
+- [Mesen native integration](docs/architecture/mesen-native-integration.md)
+- [SMB1 environment contract](docs/architecture/smb1-environment.md)
+- [SMB1 control semantics](docs/architecture/smb1-control-semantics.md)
+- [Live control loop](docs/architecture/live-control-loop.md)
+- [Forward-model trajectory planning](docs/architecture/forward-model-trajectory-planning.md)
+- [Reward-aware SMB1 planning](docs/architecture/reward-aware-planning.md)
+
+Historical M0 / M1 / V11 documents are preserved under `docs/history/` for provenance and are not the authority for current behavior.
 
 ## Design rule
 
