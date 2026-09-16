@@ -10,7 +10,13 @@ The two SMB1 block buffers form a rolling 32-column collision map. A world X
 column maps through ``(world_x >> 4) & 0x1f``; columns 0..15 live at $0500 and
 16..31 at $05d0. Each column stores 13 collision rows spaced by $10 bytes.
 Only collision-relevant metatiles are retained by the original game, so zero is
-an empty/non-colliding cell for this near-field occupancy use.
+an empty/non-colliding cell for a *current, validated* column.
+
+A non-zero rolling-buffer byte is not by itself proof that the column belongs to
+the current scene. For #31, samples at or left of the authoritative screen-right
+world coordinate are tagged ``CURRENT``; the one-tile loader margin beyond that
+boundary is retained for observability but tagged ``UNKNOWN``. Positive gap and
+obstacle semantics only consume CURRENT columns. UNKNOWN never becomes SAFE.
 
 SMB1 stores the active power-up in enemy-object slot 5 with Enemy_ID=$2e. The
 radar classifies that object into a reward channel instead of treating it as a
@@ -42,6 +48,9 @@ ADDR_STAR_INVINCIBLE_TIMER = 0x079F
 BLOCK_BUFFER_1 = 0x0500
 BLOCK_BUFFER_2 = 0x05D0
 BLOCK_ROWS = 13
+
+TERRAIN_CURRENT = "CURRENT"
+TERRAIN_UNKNOWN = "UNKNOWN"
 
 POWER_UP_NAMES = {
     0: "mushroom",
@@ -82,10 +91,18 @@ class RadarColumn:
     dx: int
     surface_row: int | None
     surface_y: int | None
+    validity: str
+    collision_samples: tuple[tuple[int, int], ...]
+    surface_address: int | None
+    surface_value: int | None
 
     @property
     def has_ground(self) -> bool:
-        return self.surface_row is not None
+        return self.validity == TERRAIN_CURRENT and self.surface_row is not None
+
+    @property
+    def known_gap(self) -> bool:
+        return self.validity == TERRAIN_CURRENT and self.surface_row is None
 
 
 @dataclass(frozen=True)
@@ -93,6 +110,7 @@ class Smb1RadarSnapshot:
     player_x: int
     lookahead_px: int
     screen_right_x: int
+    terrain_valid_through_x: int
     enemies: tuple[RadarEnemy, ...]
     rewards: tuple[RadarReward, ...]
     columns: tuple[RadarColumn, ...]
@@ -121,6 +139,7 @@ class Smb1RadarSnapshot:
             "player_x": self.player_x,
             "lookahead_px": self.lookahead_px,
             "screen_right_x": self.screen_right_x,
+            "terrain_valid_through_x": self.terrain_valid_through_x,
             "nearest_enemy_dx": self.nearest_enemy_dx,
             "nearest_gap_dx": self.nearest_gap_dx,
             "nearest_obstacle_dx": self.nearest_obstacle_dx,
@@ -160,6 +179,13 @@ class Smb1RadarSnapshot:
                     "dx": column.dx,
                     "surface_row": column.surface_row,
                     "surface_y": column.surface_y,
+                    "validity": column.validity,
+                    "surface_address": column.surface_address,
+                    "surface_value": column.surface_value,
+                    "collision_samples": [
+                        {"address": address, "value": value}
+                        for address, value in column.collision_samples
+                    ],
                 }
                 for column in self.columns
             ],
@@ -180,11 +206,27 @@ def _block_address(world_x: int, row: int) -> int:
     return base + (column & 0x0F) + (row << 4)
 
 
-def _surface_row(ram: bytes, world_x: int) -> int | None:
+def _surface_probe(
+    ram: bytes,
+    world_x: int,
+) -> tuple[int | None, int | None, int | None, tuple[tuple[int, int], ...]]:
+    samples: list[tuple[int, int]] = []
+    surface_row = None
+    surface_address = None
+    surface_value = None
     for row in range(LOWER_PLAYFIELD_FIRST_ROW, LOWER_PLAYFIELD_LAST_ROW + 1):
-        if _ram_byte(ram, _block_address(world_x, row)) != 0:
-            return row
-    return None
+        address = _block_address(world_x, row)
+        value = _ram_byte(ram, address)
+        samples.append((address, value))
+        if surface_row is None and value != 0:
+            surface_row = row
+            surface_address = address
+            surface_value = value
+    return surface_row, surface_address, surface_value, tuple(samples)
+
+
+def _surface_row(ram: bytes, world_x: int) -> int | None:
+    return _surface_probe(ram, world_x)[0]
 
 
 def decode_smb1_radar(
@@ -204,10 +246,10 @@ def decode_smb1_radar(
         (_ram_byte(ram, ADDR_SCREEN_RIGHT_PAGE) << 8)
         | _ram_byte(ram, ADDR_SCREEN_RIGHT_X)
     )
-    # Stay inside the game's currently prepared near-field map. One extra tile
-    # is safe/useful because the block-buffer loader works ahead of the viewport.
+    # Keep one loader-margin tile for diagnostics, but do not call it CURRENT.
     available_ahead = max(sample_step_px, screen_right_x - int(player_x) + sample_step_px)
     effective_lookahead = min(int(lookahead_px), available_ahead)
+    terrain_valid_through_x = screen_right_x
 
     power_up_type = _ram_byte(ram, ADDR_POWER_UP_TYPE)
     player_status = _ram_byte(ram, ADDR_PLAYER_STATUS)
@@ -268,25 +310,31 @@ def decode_smb1_radar(
     end_x = int(player_x) + effective_lookahead
     columns: list[RadarColumn] = []
     for world_x in range(start_x, end_x + 1, sample_step_px):
-        row = _surface_row(ram, world_x)
+        row, surface_address, surface_value, samples = _surface_probe(ram, world_x)
+        validity = TERRAIN_CURRENT if world_x <= terrain_valid_through_x else TERRAIN_UNKNOWN
         columns.append(
             RadarColumn(
                 world_x=world_x,
                 dx=world_x - int(player_x),
                 surface_row=row,
                 surface_y=None if row is None else 32 + row * 16,
+                validity=validity,
+                collision_samples=samples,
+                surface_address=surface_address,
+                surface_value=surface_value,
             )
         )
 
     reference_surface_row = _surface_row(ram, int(player_x))
-    nearest_gap_dx = next((column.dx for column in columns if not column.has_ground), None)
+    nearest_gap_dx = next((column.dx for column in columns if column.known_gap), None)
     nearest_obstacle_dx = None
     if reference_surface_row is not None:
         nearest_obstacle_dx = next(
             (
                 column.dx
                 for column in columns
-                if column.surface_row is not None
+                if column.validity == TERRAIN_CURRENT
+                and column.surface_row is not None
                 and column.surface_row < reference_surface_row
             ),
             None,
@@ -298,6 +346,7 @@ def decode_smb1_radar(
         player_x=int(player_x),
         lookahead_px=effective_lookahead,
         screen_right_x=screen_right_x,
+        terrain_valid_through_x=terrain_valid_through_x,
         enemies=tuple(enemies),
         rewards=tuple(rewards),
         columns=tuple(columns),
