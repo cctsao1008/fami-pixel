@@ -40,9 +40,21 @@ def test_v27_wiring_keeps_collect_worker_and_replaces_progress_payload():
     v27 = _load_v27()
     source = inspect.getsource(v27._install_v27_overrides)
 
-    # Keep this smoke test read-only. Calling the installer would intentionally
-    # monkey-patch historical planner modules for the whole pytest process.
     assert "v25._baseline_payload = _search_baseline_payload" in source
     assert "v24._best_forward_plan_partial = _best_forward_plan_partial_v27" in source
     assert "v23._forward_schedule_label = _v27_schedule_label" in source
     assert "v23.shadow_worker_main" not in source
+
+
+def test_v27_async_contract_keeps_branch_proofs_and_records_authority_actions():
+    v27 = _load_v27()
+
+    payload_source = inspect.getsource(v27._search_baseline_payload)
+    selector_source = inspect.getsource(v27._best_forward_plan_partial_v27)
+    authority_source = inspect.getsource(v27.authority_main)
+
+    assert 'payload["branch_proofs"] = branch_proofs' in payload_source
+    assert "validate_branch_proof" in inspect.getsource(v27._lineage_valid_proofs)
+    assert 'result["root_frame"] = source_root_frame' in selector_source
+    assert 'result["age"] = source_age' in selector_source
+    assert "_AUTHORITY_ACTION_LEDGER.record" in authority_source
