@@ -83,7 +83,17 @@ class LandingZoneAssessment:
 
     @property
     def landing_unsafe(self) -> bool:
-        """Known unsafe. UNKNOWN is intentionally neither safe nor unsafe."""
+        """Legacy policy signal: enemy occupancy only.
+
+        V20/V26 historically use this property to choose the enemy-cluster jump
+        macro. Terrain GAP/UNKNOWN must not silently repurpose that macro, so the
+        backward-compatible property remains enemy-specific. Use
+        ``landing_known_unsafe`` or ``landing_status`` for full semantics.
+        """
+        return self.landing_enemy_unsafe
+
+    @property
+    def landing_known_unsafe(self) -> bool:
         return self.landing_status in {LANDING_ENEMY, LANDING_GAP}
 
     @property
@@ -113,6 +123,7 @@ class LandingZoneAssessment:
             "landing_status": self.landing_status,
             "landing_safe": self.landing_safe,
             "landing_unsafe": self.landing_unsafe,
+            "landing_known_unsafe": self.landing_known_unsafe,
             "landing_unknown": self.landing_unknown,
         }
 
@@ -204,9 +215,6 @@ def _terrain_corridor_status(
     if gap_dxs:
         return TERRAIN_GAP, len(columns), valid_count, tuple(gap_dxs), tuple(unknown_dxs)
 
-    # SAFE requires the corridor's far edge to be inside current validated
-    # lookahead, at least one sample in the corridor, and every sampled column
-    # there to be current. Anything less is UNKNOWN rather than optimistic SAFE.
     if (
         lookahead_px >= landing_far_px
         and columns
