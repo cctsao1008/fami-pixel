@@ -83,6 +83,44 @@ Current-scene perception includes:
 
 Semantic labels are planning evidence, not machine truth. In particular, absence of positive gap evidence must not silently become proof of safe terrain.
 
+### Terrain validity
+
+SMB1 terrain comes from rolling collision block buffers. A non-zero byte is not sufficient evidence that the corresponding rolling-buffer slot is authoritative for the current world column.
+
+The current conservative contract tags sampled terrain columns as:
+
+```text
+CURRENT   inside the current validated screen-right boundary
+UNKNOWN   retained for observability but outside validated current coverage
+```
+
+Positive gap and obstacle semantics consume only `CURRENT` columns. Radar evidence includes the sampled world X, collision-buffer addresses/values, selected surface row/address/value, and the current terrain-valid boundary.
+
+This is deliberately conservative. Exact Mesen rollout remains the final trajectory authority.
+
+### Projected landing terrain
+
+The +96..+160 px projected landing corridor has an explicit three-state terrain result:
+
+```text
+SAFE      complete current coverage and supported terrain throughout the sampled corridor
+GAP       at least one known current sampled column is unsupported
+UNKNOWN   coverage is incomplete or any relevant sample is not validated current data
+```
+
+`UNKNOWN` is not promoted to `SAFE`.
+
+Full landing status combines enemy occupancy with terrain semantics:
+
+```text
+SAFE          enemy-clear + terrain SAFE
+UNSAFE_ENEMY  enemy occupies the landing corridor
+GAP           known unsupported terrain in the corridor
+UNKNOWN       no known hazard, but terrain safety is not established
+```
+
+The enemy-cluster avoidance macro remains a separate policy signal. Terrain `GAP/UNKNOWN` does not silently repurpose that macro; dedicated terrain guards and exact Mesen forward trajectories handle pit control.
+
 ## Rewards and capabilities
 
 Reward state is decoded from live game state. Current power-up semantics include Mushroom, Fire Flower, Star, and 1-Up object typing, plus player capability state and Star invincibility timer.
@@ -110,6 +148,8 @@ logical action and NES byte
 Mario state
 engine state
 semantic radar
+terrain sample validity / buffer evidence
+projected landing status
 objective / target
 planner source and age
 terminal outcome
