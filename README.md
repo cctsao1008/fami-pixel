@@ -1,11 +1,11 @@
 <p align="center">
-  <img src="docs/assets/fami-mascot.svg" width="280" alt="Fami mascot">
+  <img src="docs/assets/fami-mascot.svg" width="240" alt="Fami mascot">
 </p>
 
 <h1 align="center">Fami Pixel</h1>
 
 <p align="center">
-  <strong>Deterministic machine-control research for Famicom / NES games</strong>
+  <strong>A deterministic machine-control research platform for Famicom / NES games.</strong>
 </p>
 
 <p align="center">
@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <em>See the pixels. Simulate the future. Don't fall in the same pit twice.</em>
+  🎮 Play &nbsp;·&nbsp; 📡 Observe &nbsp;·&nbsp; 🧠 Plan &nbsp;·&nbsp; 🌟 Collect &nbsp;·&nbsp; 🏁 Survive
 </p>
 
 > Let Python see the game, understand the world, and control the player.
@@ -22,18 +22,18 @@ The first workload is **Super Mario Bros.** running on **Mesen CE**. Fami Pixel 
 
 ## Meet Fami
 
-**Fami** is the fami-pixel mascot: a playful retro-game scout that treats every failure as another rollout to learn from.
+**Fami** is the fami-pixel mascot: a competitive retro-game scout with a radar eye, a save-state habit, and very little patience for stale plans.
 
-| Trait | Fami |
+| | Fami |
 |---|---|
-| Personality | Mischievous, competitive, observant, and perfectly willing to turn a failed run into a joke |
-| Interests | Retro games, platformers, RL, radar, game AI, save-state futures |
-| Special move | Look at the live scene, simulate multiple futures, then commit to the one that actually survives |
-| Favorite battle cry | `One more rollout!` / `Mesen says NO.` / `XDDDDD` |
-| Zodiac | **Sagittarius** |
-| Natural enemies | stale plans, `UNKNOWN == SAFE`, and dying in the same pit twice |
+| **Personality** | Playful, competitive, observant, and perfectly willing to turn failure into a postmortem joke |
+| **Likes** | Retro games, platformers, RL, radar, game AI, save-state futures |
+| **Special move** | Look at several exact futures, then commit to the one that does not end in a pit |
+| **Quotes** | `One more rollout!` · `Mesen says NO.` · `XDDDDD` |
+| **Zodiac** | **Sagittarius ♐** |
+| **Nemesis** | stale plans, `UNKNOWN == SAFE`, and falling into the same pit twice |
 
-> **"I've seen eight futures. Seven end in a pit. Let's take the eighth." — Fami**
+> **“I've seen eight futures. Seven end in a pit. Let's take the eighth.” — Fami**
 
 ## Current milestone
 
@@ -50,7 +50,7 @@ The validated run combined:
 - per-run timeline, framebuffer, radar, and terminal evidence.
 
 <p align="center">
-  <img src="docs/assets/v26-world-1-1-complete.svg" alt="V26 autonomous Super Mario Bros. World 1-1 completion" width="512">
+  <img src="docs/assets/v26-world-1-1-complete.png" alt="V26 autonomous Super Mario Bros. World 1-1 completion" width="512">
 </p>
 
 <p align="center"><em>V26 autonomous World 1-1 completion — final flagpole / castle frame.</em></p>
