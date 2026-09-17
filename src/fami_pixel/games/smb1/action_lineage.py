@@ -13,7 +13,9 @@ whether enough exact-Mesen horizon remains to cover the next commitment.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
+from typing import Iterator
 
 
 @dataclass(frozen=True)
@@ -35,6 +37,11 @@ class AuthorityActionLedger:
     transition ``f -> f+1``. Re-recording the same frame replaces the value,
     which matches controller semantics if a caller changes the pad state more
     than once before stepping the emulator.
+
+    Speculative save/restore/search code can temporarily manipulate the same
+    instrumented controller setter without advancing the live authority. Such
+    calls must use :meth:`suspend_recording` so counterfactual input writes never
+    become authority history.
     """
 
     def __init__(self, *, max_entries: int = 512) -> None:
@@ -42,11 +49,29 @@ class AuthorityActionLedger:
             raise ValueError("max_entries must be > 0")
         self.max_entries = int(max_entries)
         self._buttons: dict[int, int] = {}
+        self._recording_suspended = 0
 
     def clear(self) -> None:
         self._buttons.clear()
 
+    @contextmanager
+    def suspend_recording(self) -> Iterator[None]:
+        """Ignore ledger writes inside a speculative, non-authority scope.
+
+        Suspension is nest-safe. Existing authoritative history is preserved,
+        and recording resumes automatically even if the speculative operation
+        raises.
+        """
+
+        self._recording_suspended += 1
+        try:
+            yield
+        finally:
+            self._recording_suspended -= 1
+
     def record(self, frame: int, buttons: int) -> None:
+        if self._recording_suspended > 0:
+            return
         frame_id = int(frame)
         self._buttons[frame_id] = int(buttons)
         overflow = len(self._buttons) - self.max_entries
