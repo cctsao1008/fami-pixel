@@ -3,7 +3,9 @@
 
 The scenario must come from ``extract_smb1_multi_enemy_scenario.py`` and prove
 that the selected live root had at least two enemies in the configured landing
-corridor *and* that the live planner actually selected a landing-zone guard.
+corridor, that the nearest cluster itself is a projected multi-enemy cluster
+inside that corridor, and that the live planner actually selected a landing-zone
+guard.
 
 The generic exact-Mesen trajectory probe is reused, but this wrapper augments its
 candidate set with the exact V20/V26 live landing actions:
@@ -85,6 +87,31 @@ def manifest_landing_guard(manifest: dict) -> str:
     return "" if value is None else str(value)
 
 
+def manifest_projected_cluster(manifest: dict) -> tuple[int, int | None, int | None, int, int]:
+    def _int(name: str, default: int | None = None) -> int | None:
+        value = manifest.get(name)
+        if value is None:
+            return default
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    count = max(0, int(_int("selection_nearest_cluster_count", 0) or 0))
+    start = _int("selection_nearest_cluster_start_dx")
+    end = _int("selection_nearest_cluster_end_dx")
+    near = int(_int("selection_landing_corridor_start_dx", 96) or 96)
+    far = int(_int("selection_landing_corridor_end_dx", 160) or 160)
+    return count, start, end, near, far
+
+
+def manifest_has_clean_projected_cluster(manifest: dict, required: int) -> bool:
+    count, start, end, near, far = manifest_projected_cluster(manifest)
+    if count < int(required) or start is None or end is None:
+        return False
+    return near <= start <= end <= far
+
+
 def expected_live_plan_name(guard: str) -> str | None:
     if str(guard).startswith("landing-zone-extend"):
         return "live_cluster_extend_8"
@@ -138,12 +165,22 @@ def worker(args: argparse.Namespace) -> int:
     required = int(args.landing_enemies_at_least)
     guard = manifest_landing_guard(manifest)
     expected_plan = expected_live_plan_name(guard)
+    cluster_count, cluster_start, cluster_end, corridor_start, corridor_end = (
+        manifest_projected_cluster(manifest)
+    )
 
     if count < required:
         raise SystemExit(
             "scenario is not a strict multi-enemy fixture: "
             f"selection_landing_enemy_count={count}, required>={required}. "
             "Re-extract with tools/extract_smb1_multi_enemy_scenario.py."
+        )
+    if not manifest_has_clean_projected_cluster(manifest, required):
+        raise SystemExit(
+            "scenario is not a clean projected multi-enemy fixture: "
+            f"cluster={cluster_count}@{cluster_start}..{cluster_end}, "
+            f"corridor={corridor_start}..{corridor_end}, required>={required}. "
+            "Re-extract with the current tools/extract_smb1_multi_enemy_scenario.py."
         )
     if expected_plan is None:
         raise SystemExit(
@@ -176,6 +213,8 @@ def worker(args: argparse.Namespace) -> int:
     print(
         f"MultiEnemy : landing_enemy_count={count} required>={required} "
         f"selection_generation={manifest.get('selection_generation')} "
+        f"cluster={cluster_count}@{cluster_start}..{cluster_end} "
+        f"corridor={corridor_start}..{corridor_end} "
         f"guard={guard} expected_plan={expected_plan}",
         flush=True,
     )
