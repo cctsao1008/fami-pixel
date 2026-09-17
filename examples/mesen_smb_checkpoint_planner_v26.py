@@ -54,6 +54,7 @@ already-started crossing commitment.
 
 from __future__ import annotations
 
+from fami_pixel.control import PlanDelegateSlot
 from fami_pixel.games.smb1.terrain_guard import (
     gap_escape_schedule,
     near_gap_guard,
@@ -72,11 +73,61 @@ PLANNER_NAME = "v26-current-gap-preemption"
 GAP_ESCAPE_CANDIDATE = "terrain_gap_escape_rearm"
 _BASE_V25_AUTHORITY = v25.authority_main
 _BASE_V25_LABEL = v25._v25_schedule_label
+
+# Transitional compatibility for historical V28-V34 runners.  The current V35
+# composition installs through ``install_lower_plan_delegate`` instead of
+# assigning this global.  Historical versions can keep their original source
+# while #35 migrates them incrementally.
 _BASE_V25_PLAN = v25._best_v25_plan
+_LOWER_PLAN_DELEGATE = PlanDelegateSlot("smb1-collect-progress", v25._best_v25_plan)
+_lower_plan_delegate_explicit = False
 
 _gap_commit_root_frame: int | None = None
 _gap_commit_trigger_dx: int | None = None
 _gap_commit_trigger_grounded: bool | None = None
+
+
+def install_lower_plan_delegate(selector) -> None:
+    """Install the lower COLLECT/PROGRESS selector through a stable control seam."""
+
+    global _lower_plan_delegate_explicit
+    _LOWER_PLAN_DELEGATE.install(selector)
+    _lower_plan_delegate_explicit = True
+
+
+def reset_lower_plan_delegate() -> None:
+    """Restore V25 fallback and legacy mode before composing a historical stack."""
+
+    global _BASE_V25_PLAN, _lower_plan_delegate_explicit
+    _BASE_V25_PLAN = v25._best_v25_plan
+    _LOWER_PLAN_DELEGATE.reset()
+    _lower_plan_delegate_explicit = False
+
+
+def _select_lower_plan(
+    response_paths,
+    current_frame: int,
+    freshness: int,
+    last_applied_generation: int,
+    live_radar: dict,
+):
+    if _lower_plan_delegate_explicit:
+        return _LOWER_PLAN_DELEGATE.select(
+            response_paths,
+            current_frame,
+            freshness,
+            last_applied_generation,
+            live_radar,
+        )
+    # Compatibility path until V28-V34 historical installers are migrated from
+    # direct ``_BASE_V25_PLAN`` assignment.  Current V35 does not use this path.
+    return _BASE_V25_PLAN(
+        response_paths,
+        current_frame,
+        freshness,
+        last_applied_generation,
+        live_radar,
+    )
 
 
 def _looks_grounded_observation(observation) -> bool:
@@ -240,7 +291,7 @@ def _best_v26_plan(
     if landing_plan is not None:
         return landing_plan
 
-    return _BASE_V25_PLAN(
+    return _select_lower_plan(
         response_paths,
         current_frame,
         freshness,
@@ -266,6 +317,11 @@ def authority_main(args) -> int:
 
 
 def _install_v26_overrides() -> None:
+    # Re-establish the V26 baseline whenever a historical composition starts;
+    # later installers may replace the lower selector through either the legacy
+    # compatibility global or the explicit stable delegate seam.
+    reset_lower_plan_delegate()
+
     # Historical planners keep their old behavior; only the V26 runtime receives
     # the stronger support predicate discovered by the gen295 exact-Mesen gate.
     v16._looks_grounded = _looks_grounded_observation
