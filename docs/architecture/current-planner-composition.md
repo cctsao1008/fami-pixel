@@ -1,8 +1,8 @@
 # Current SMB1 planner composition
 
-Status: characterization baseline for issue #35.
+Status: characterization baseline plus incremental extraction for issue #35.
 
-This document records the **effective current planner composition before structural extraction**. It is intentionally descriptive: it does not redefine behavior and it does not make historical example modules authoritative architecture. The purpose is to freeze what the repository currently does so code can move into stable `src/fami_pixel/` layers without silently changing policy.
+This document records the **effective current planner composition before and during structural extraction**. It does not redefine behavior and it does not make historical example modules authoritative architecture. The purpose is to freeze what the repository does so code can move into stable `src/fami_pixel/` layers without silently changing policy.
 
 ## Authority model
 
@@ -27,7 +27,7 @@ The latest runnable entry point is:
 examples/mesen_smb_checkpoint_planner_v35.py
 ```
 
-`v35.main()` installs the current override stack and then dispatches through `v23.main()`. This means the active composition is still assembled by mutating functions/globals owned by historical planner modules. That is the architectural debt tracked by #35.
+`v35.main()` installs the current override stack and then dispatches through `v23.main()`. The active composition is therefore still largely assembled by historical planner modules. Issue #35 is extracting those ownership boundaries incrementally instead of replacing the stack in one rewrite.
 
 The installer dependency chain is:
 
@@ -46,7 +46,7 @@ V35
                                   -> installs V26
 ```
 
-This is not a simple inheritance chain. Later installers replace selected delegates in earlier modules. In particular, several generations replace `v26._BASE_V25_PLAN`, while worker-side COLLECT evaluation is replaced through V28/V30/V31 and PROGRESS evaluation remains rooted in V27.
+This is not a simple inheritance chain. Later installers replace selected delegates in earlier modules. Worker-side COLLECT evaluation is replaced through V28/V30/V31 and PROGRESS evaluation remains rooted in V27.
 
 ## Effective decision ordering
 
@@ -137,9 +137,9 @@ The current planner already depends on stable runtime helpers under `src/fami_pi
 
 These runtime concerns should stay separate from planner policy during #35 extraction.
 
-## Stable domain primitives already outside examples
+## Stable package boundaries
 
-Important current behavior is already implemented in package modules rather than historical examples, including:
+Important current behavior was already implemented in package modules rather than historical examples, including:
 
 ```text
 src/fami_pixel/adapters/mesen/          native emulator boundary
@@ -150,14 +150,28 @@ src/fami_pixel/runtime/                 process/checkpoint lifecycle
 src/fami_pixel/telemetry/               evidence/UI support
 ```
 
-The remaining debt is primarily **composition/orchestration ownership**, not the absence of reusable primitives.
-
-## Mutation map that must disappear from the active architecture
-
-The current composition is created through runtime replacement of symbols in historical modules. Characterization must preserve the effects of these mutations before removing them. High-value mutation points include:
+The first #35 structural slice now also introduces:
 
 ```text
-v26._BASE_V25_PLAN
+src/fami_pixel/planning/contracts.py    stable PlanSelector callable contract
+src/fami_pixel/control/delegates.py     explicit process-local PlanDelegateSlot
+```
+
+V35 no longer performs its final lower-objective composition by assigning directly to `v26._BASE_V25_PLAN`. Instead it calls:
+
+```python
+v26.install_lower_plan_delegate(_best_collect_or_progress)
+```
+
+V26 keeps SURVIVE / landing preemption as the owner above that seam, and dispatches the lower selector through the stable `PlanDelegateSlot`. This is behavior-neutral: only dependency installation moved.
+
+For migration compatibility, historical V28-V34 source still assigns `v26._BASE_V25_PLAN`. V26 resets into that legacy mode when a historical stack is installed, so those runners remain usable while they are migrated incrementally. The **current V35 composition** ends in the explicit stable delegate path; the historical compatibility global is not its final lower-plan authority.
+
+## Mutation map still to remove from the active architecture
+
+Characterization must preserve the effects of these remaining mutations before removing them. High-value points include:
+
+```text
 v23.authority_main
 v23.PLANNER_NAME
 v23.shadow_worker_main / forward-search delegates
@@ -167,7 +181,9 @@ v24/V27 partial-progress selector
 base.set_nes_controller_state instrumentation/capture wrappers
 ```
 
-The target architecture should make these dependencies explicit constructor/composition inputs instead of ambient module mutation.
+Historical V28-V34 `v26._BASE_V25_PLAN` assignments remain compatibility debt, but the V35 composition now terminates that chain through the explicit stable delegate seam.
+
+The target architecture should make the remaining dependencies explicit constructor/composition inputs instead of ambient module mutation.
 
 ## Extraction boundaries
 
@@ -192,10 +208,10 @@ Game-specific state decoding and Mesen trajectory mechanics remain under the exi
 
 Do not rewrite the stack in one step. Use this order:
 
-1. **Characterize V35 composition** — this document plus source-level tests that freeze the installer/delegation graph.
-2. Introduce stable `planning/` and `control/` package boundaries with behavior-neutral contracts.
+1. **Characterize V35 composition** — complete: this document plus source-level tests freeze the installer/delegation graph.
+2. **Introduce stable `planning/` and `control/` boundaries** — started: `PlanSelector` and `PlanDelegateSlot` now own the first explicit composition seam.
 3. Extract pure admission/lineage/cohort/objective helpers first; keep historical wrappers calling the stable functions.
-4. Extract the lower COLLECT/PROGRESS arbitration currently assigned through `v26._BASE_V25_PLAN`.
+4. Continue extracting lower COLLECT/PROGRESS arbitration and migrate V28-V34 off the legacy compatibility assignment.
 5. Extract authority-loop orchestration and worker-response intake into `control/`.
 6. Create one explicit stable SMB1 composition root.
 7. Point a thin current runner at that stable root.
@@ -217,4 +233,4 @@ Structural extraction is equivalent only if all of the following remain true:
 - surrogate authority does not increase;
 - deterministic behavioral acceptance from #32 remains green.
 
-Until the active runner no longer depends on the versioned override chain, this document is a characterization baseline, not the final architecture.
+Until the active runner no longer depends on the versioned override chain, this document is a migration baseline, not the final architecture.
