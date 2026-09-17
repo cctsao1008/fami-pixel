@@ -59,7 +59,18 @@ current SURVIVE commitment
             > PROGRESS
 ```
 
-V26 owns the current-scene SURVIVE / gap / landing-preemption layer. Later versions replace only the lower COLLECT/PROGRESS delegate rather than bypassing V26.
+V26 owns the current-scene SURVIVE / gap / landing-preemption policy. Later versions replace only the lower COLLECT/PROGRESS delegate rather than bypassing V26.
+
+One characterization nuance matters during extraction: the function currently installed in `v23._best_forward_plan` is V28's `_best_v28_plan`, not V26 directly. V28 is a transparent authority-plan memory wrapper: it calls the captured V26 selector first, then remembers the schedule V26 actually selected so later COLLECT workers can build exact continuation handoffs. Therefore the effective control path is:
+
+```text
+v23._best_forward_plan
+  -> V28 authority-plan memory wrapper
+      -> V26 SURVIVE / landing policy owner
+          -> stable lower COLLECT/PROGRESS delegate seam
+```
+
+The V28 wrapper is bookkeeping around the V26 decision, not a competing safety policy owner. Removing or bypassing it before its continuation-memory responsibility is extracted would change non-Star COLLECT behavior.
 
 ### SURVIVE / landing preemption
 
@@ -167,6 +178,8 @@ V26 keeps SURVIVE / landing preemption as the owner above that seam, and dispatc
 
 For migration compatibility, historical V28-V34 source still assigns `v26._BASE_V25_PLAN`. V26 resets into that legacy mode when a historical stack is installed, so those runners remain usable while they are migrated incrementally. The **current V35 composition** ends in the explicit stable delegate path; the historical compatibility global is not its final lower-plan authority.
 
+The V23-facing V28 `_best_v28_plan` wrapper intentionally remains in place for now because it records the schedule returned by V26 into `_LATEST_AUTHORITY_PLAN`. That state feeds V28/V34 continuation-based COLLECT handoffs. This wrapper is therefore a separate extraction responsibility from the lower-plan delegate seam.
+
 ## Mutation map still to remove from the active architecture
 
 Characterization must preserve the effects of these remaining mutations before removing them. High-value points include:
@@ -174,6 +187,7 @@ Characterization must preserve the effects of these remaining mutations before r
 ```text
 v23.authority_main
 v23.PLANNER_NAME
+v23._best_forward_plan (currently the V28 authority-plan memory wrapper)
 v23.shadow_worker_main / forward-search delegates
 v28 worker-side COLLECT search entry
 v25 PROGRESS baseline payload
@@ -212,7 +226,7 @@ Do not rewrite the stack in one step. Use this order:
 2. **Introduce stable `planning/` and `control/` boundaries** — started: `PlanSelector` and `PlanDelegateSlot` now own the first explicit composition seam.
 3. Extract pure admission/lineage/cohort/objective helpers first; keep historical wrappers calling the stable functions.
 4. Continue extracting lower COLLECT/PROGRESS arbitration and migrate V28-V34 off the legacy compatibility assignment.
-5. Extract authority-loop orchestration and worker-response intake into `control/`.
+5. Extract V28 authority-plan continuation memory and the live authority-loop/worker-response orchestration into `control/` without bypassing its current behavior.
 6. Create one explicit stable SMB1 composition root.
 7. Point a thin current runner at that stable root.
 8. Retain V1-V35 examples as research provenance/regression references rather than active architecture owners.
@@ -224,6 +238,7 @@ At every slice, existing deterministic gates remain authoritative: Star 4f repla
 Structural extraction is equivalent only if all of the following remain true:
 
 - SURVIVE/landing preemption remains above COLLECT and PROGRESS;
+- the V28 authority-plan continuation memory remains behaviorally equivalent until it is explicitly extracted;
 - Star current-root synchronous exact-Mesen behavior remains current-root and 4-frame receding;
 - non-Star COLLECT retains current handoff/cohort/deadline semantics;
 - PROGRESS retains bounded multi-chunk search and exact-Mesen final authority;
