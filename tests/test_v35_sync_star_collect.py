@@ -1,6 +1,28 @@
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
+import sys
 from types import SimpleNamespace
 
-import mesen_smb_checkpoint_planner_v35 as v35
+
+def _load_v35():
+    examples = (Path(__file__).resolve().parents[1] / "examples").resolve()
+    sys.path.insert(0, str(examples))
+    try:
+        path = examples / "mesen_smb_checkpoint_planner_v35.py"
+        spec = spec_from_file_location("planner_v35_sync_star_collect", path)
+        assert spec is not None and spec.loader is not None
+        module = module_from_spec(spec)
+        sys.modules[spec.name] = module
+        try:
+            spec.loader.exec_module(module)
+        finally:
+            sys.modules.pop(spec.name, None)
+        return module
+    finally:
+        try:
+            sys.path.remove(str(examples))
+        except ValueError:
+            pass
 
 
 def _outcome(*, x, y=120, collected=False, died=False, reward_key=(1, 2, 3), target=None):
@@ -16,6 +38,7 @@ def _outcome(*, x, y=120, collected=False, died=False, reward_key=(1, 2, 3), tar
 
 
 def test_sync_star_search_is_root_exact_and_restores_after_every_branch(monkeypatch, tmp_path):
+    v35 = _load_v35()
     fake_core = object()
     v35._SYNC_CHECKPOINT = tmp_path / "sync-star.mss"
     v35._SYNC_STEP_TIMEOUT = 1.0
@@ -74,6 +97,7 @@ def test_sync_star_search_is_root_exact_and_restores_after_every_branch(monkeypa
 
 
 def test_sync_star_root_mismatch_never_rebases(monkeypatch, tmp_path):
+    v35 = _load_v35()
     fake_core = object()
     v35._SYNC_CHECKPOINT = tmp_path / "sync-star.mss"
     restored = []
@@ -98,6 +122,7 @@ def test_sync_star_root_mismatch_never_rebases(monkeypatch, tmp_path):
 
 
 def test_star_uses_sync_path_before_v34_async(monkeypatch):
+    v35 = _load_v35()
     sentinel = {"candidate": "collect_hold_right_jump4", "root_frame": 200}
     v35._LIVE_AUTHORITY_CORE = object()
 
@@ -119,6 +144,7 @@ def test_star_uses_sync_path_before_v34_async(monkeypatch):
 
 
 def test_non_star_retains_v34_path(monkeypatch):
+    v35 = _load_v35()
     sentinel = {"candidate": "async-mushroom"}
     v35._LIVE_AUTHORITY_CORE = object()
     monkeypatch.setattr(
