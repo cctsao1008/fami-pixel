@@ -16,6 +16,11 @@ candidate set with the exact V20/V26 live landing actions:
 PASS requires the live guard action itself to reach a Mesen-resolved safe landing
 (or win), and the generic probe must also report a safe resolved selection. Radar
 geometry alone is never accepted as trajectory proof.
+
+Before the acceptance replay, a short exact-Mesen controller diagnostic restores
+the same root and compares 8-frame RIGHT+B and LEFT+B branches. This is not an
+acceptance shortcut: it distinguishes a non-player-control / non-responsive root
+from a real trajectory-policy failure when long branches become command-invariant.
 """
 
 from __future__ import annotations
@@ -158,6 +163,97 @@ def _live_landing_plans(generic) -> tuple:
     )
 
 
+def _control_signature(observation) -> tuple[int, int, int, int, int, int]:
+    return (
+        int(observation.mario_x_abs),
+        int(observation.mario_y),
+        int(observation.game_engine_subroutine),
+        int(observation.player_state),
+        int(observation.player_x_speed),
+        int(observation.player_y_speed),
+    )
+
+
+def _diagnose_root_control(generic, args: argparse.Namespace, scenario_dir: Path, manifest: dict) -> dict:
+    """Compare short opposite-input branches from the exact fixture root."""
+
+    state_file = scenario_dir / str(manifest.get("state_file", "root.mss"))
+    diag_home = Path(f"{args.home}-diag")
+    core = generic.MesenCore(args.dll)
+    core.initialize_headless(diag_home)
+    generic.configure_standard_nes_controller(core, port=1)
+    if not core.load_rom(args.rom):
+        raise SystemExit("LoadRom: FAIL during root-control diagnostic")
+    core.initialize_debugger()
+
+    branches = {}
+    try:
+        generic._restore(core, state_file, manifest)
+        root = generic.observation_from_state(core.frame_count(), generic.read_smb1_state(core))
+        print(
+            "RootState  : "
+            f"engine=0x{int(root.game_engine_subroutine):02X} "
+            f"oper={int(root.oper_mode)}/{int(root.oper_mode_task)} "
+            f"pstate={int(root.player_state)} yhigh={int(root.mario_y_high)} "
+            f"vx={int(root.player_x_speed)} vy={int(root.player_y_speed)} "
+            f"joy=0x{int(root.raw_joypad):02X} control={int(bool(root.is_player_control))}",
+            flush=True,
+        )
+
+        for name, action in (
+            ("right8", generic.Smb1Action.RIGHT_B),
+            ("left8", generic.Smb1Action.LEFT_B),
+        ):
+            generic._restore(core, state_file, manifest)
+            start = generic.observation_from_state(core.frame_count(), generic.read_smb1_state(core))
+            plan = generic.TrajectoryPlan(
+                f"diag_{name}",
+                (generic.ActionCommand(action, 8),),
+                tail_action=action,
+            )
+            result = generic.evaluate_mesen_trajectory(
+                core,
+                plan,
+                max_horizon_frames=8,
+                step_timeout_s=float(args.step_timeout),
+                target_reward_type=None,
+                start_observation=start,
+                stop_on_landing=False,
+            )
+            end = generic.observation_from_state(core.frame_count(), generic.read_smb1_state(core))
+            signature = _control_signature(end)
+            branches[name] = signature
+            print(
+                f"Control8   : {name:6s} event={result.event.value:7s} "
+                f"X={int(end.mario_x_abs)} Y={int(end.mario_y)} "
+                f"engine=0x{int(end.game_engine_subroutine):02X} "
+                f"pstate={int(end.player_state)} vx={int(end.player_x_speed)} "
+                f"vy={int(end.player_y_speed)} joy=0x{int(end.raw_joypad):02X}",
+                flush=True,
+            )
+
+        responsive = branches.get("right8") != branches.get("left8")
+        print(
+            "Control8   : "
+            f"responsive={int(bool(responsive))} "
+            f"root_player_control={int(bool(root.is_player_control))}",
+            flush=True,
+        )
+        return {
+            "root_player_control": bool(root.is_player_control),
+            "responsive": bool(responsive),
+            "root_engine": int(root.game_engine_subroutine),
+            "right8": branches.get("right8"),
+            "left8": branches.get("left8"),
+        }
+    finally:
+        try:
+            core.stop()
+            core.release()
+        except Exception:
+            pass
+
+
 def worker(args: argparse.Namespace) -> int:
     scenario_dir = args.scenario_dir.expanduser().resolve()
     manifest = _load_manifest(scenario_dir)
@@ -190,6 +286,8 @@ def worker(args: argparse.Namespace) -> int:
         )
 
     generic = _load_generic_probe()
+    diagnostic = _diagnose_root_control(generic, args, scenario_dir, manifest)
+
     original_plans = generic.PLANS
     generic.PLANS = _live_landing_plans(generic) + tuple(original_plans)
     probe_args = SimpleNamespace(
@@ -220,6 +318,18 @@ def worker(args: argparse.Namespace) -> int:
     )
     print(output, end="" if output.endswith("\n") or not output else "\n", flush=True)
 
+    if not diagnostic["root_player_control"]:
+        raise SystemExit(
+            "multi-enemy deterministic gate failed: fixture root is not in SMB1 "
+            f"player-control subroutine (engine=0x{diagnostic['root_engine']:02X}); "
+            "the semantic selector must choose a controller-authoritative root"
+        )
+    if not diagnostic["responsive"]:
+        raise SystemExit(
+            "multi-enemy deterministic gate failed: exact root produced identical "
+            "8-frame RIGHT+B and LEFT+B control signatures; inspect checkpoint/root "
+            "authority before changing the trajectory policy"
+        )
     if return_code != 0:
         raise SystemExit(f"trajectory probe failed with exit code {return_code}")
     if not output_has_live_guard_success(output, guard):
