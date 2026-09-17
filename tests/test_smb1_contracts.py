@@ -106,6 +106,13 @@ def test_events_derive_landing() -> None:
     assert [event.kind for event in events] == [GameEventType.MOVED, GameEventType.LANDED]
 
 
+def test_events_derive_landing_from_falling_state() -> None:
+    previous = _observation(282, x=132, state=2, y=0xAF)
+    current = _observation(283, x=133, state=0, y=0xB0)
+    events = derive_game_events(previous, current)
+    assert [event.kind for event in events] == [GameEventType.MOVED, GameEventType.LANDED]
+
+
 def test_events_derive_death_on_player_death_routine_entry() -> None:
     previous = _observation(300, x=140, state=0, engine=0x08)
     current = _observation(301, x=140, state=0, engine=0x0B)
