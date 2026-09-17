@@ -18,9 +18,11 @@ PASS requires the live guard action itself to reach a Mesen-resolved safe landin
 geometry alone is never accepted as trajectory proof.
 
 Before the acceptance replay, a short exact-Mesen controller diagnostic restores
-the same root and compares 8-frame RIGHT+B and LEFT+B branches. This is not an
-acceptance shortcut: it distinguishes a non-player-control / non-responsive root
-from a real trajectory-policy failure when long branches become command-invariant.
+the same root and compares 8-frame RIGHT+B and LEFT+B branches. The diagnostic is
+run in a dedicated child process because MesenCore's native InitDll/Release
+lifecycle is process-global and is not safely reinitialized in the same Python
+process. This is not an acceptance shortcut: it only distinguishes a
+non-player-control / non-responsive root from a real trajectory-policy failure.
 """
 
 from __future__ import annotations
@@ -31,11 +33,13 @@ from importlib.util import module_from_spec, spec_from_file_location
 import io
 import json
 from pathlib import Path
+import subprocess
 import sys
 from types import SimpleNamespace
 
 
 _DONE = "MultiGoombaLandingProbe: PASS"
+_DIAG_MARKER = "RootControlDiagnostic: "
 
 
 def parse_args() -> argparse.Namespace:
@@ -47,6 +51,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-horizon", type=int, default=320)
     p.add_argument("--step-timeout", type=float, default=2.0)
     p.add_argument("--landing-enemies-at-least", type=int, default=2)
+    p.add_argument("--diag-worker", action="store_true", help=argparse.SUPPRESS)
     args = p.parse_args()
     if args.max_horizon <= 0:
         p.error("--max-horizon must be > 0")
@@ -254,6 +259,66 @@ def _diagnose_root_control(generic, args: argparse.Namespace, scenario_dir: Path
             pass
 
 
+def _diagnostic_command(args: argparse.Namespace) -> list[str]:
+    return [
+        sys.executable,
+        "-u",
+        str(Path(__file__).resolve()),
+        str(args.rom),
+        str(args.scenario_dir),
+        "--dll",
+        str(args.dll),
+        "--home",
+        str(args.home),
+        "--step-timeout",
+        str(float(args.step_timeout)),
+        "--diag-worker",
+    ]
+
+
+def _parse_diagnostic_output(output: str) -> dict:
+    payloads = [
+        line[len(_DIAG_MARKER) :]
+        for line in output.splitlines()
+        if line.startswith(_DIAG_MARKER)
+    ]
+    if len(payloads) != 1:
+        raise RuntimeError(
+            "root-control diagnostic did not emit exactly one machine payload"
+        )
+    try:
+        value = json.loads(payloads[0])
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("invalid root-control diagnostic payload") from exc
+    if not isinstance(value, dict):
+        raise RuntimeError("root-control diagnostic payload is not an object")
+    return value
+
+
+def _diagnose_root_control_subprocess(args: argparse.Namespace) -> dict:
+    """Run native Mesen root diagnostics in a disposable process.
+
+    MesenCore Release() tears down process-global native state; calling InitDll()
+    again in the same Python process can access-violate. Keep the acceptance
+    worker's one InitDll lifecycle pristine by isolating this preflight.
+    """
+
+    completed = subprocess.run(
+        _diagnostic_command(args),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+    output = completed.stdout or ""
+    print(output, end="" if output.endswith("\n") or not output else "\n", flush=True)
+    if int(completed.returncode) != 0:
+        raise SystemExit(
+            f"root-control diagnostic failed with exit code {completed.returncode}"
+        )
+    return _parse_diagnostic_output(output)
+
+
 def worker(args: argparse.Namespace) -> int:
     scenario_dir = args.scenario_dir.expanduser().resolve()
     manifest = _load_manifest(scenario_dir)
@@ -285,8 +350,8 @@ def worker(args: argparse.Namespace) -> int:
             "tools/extract_smb1_multi_enemy_scenario.py."
         )
 
+    diagnostic = _diagnose_root_control_subprocess(args)
     generic = _load_generic_probe()
-    diagnostic = _diagnose_root_control(generic, args, scenario_dir, manifest)
 
     original_plans = generic.PLANS
     generic.PLANS = _live_landing_plans(generic) + tuple(original_plans)
@@ -321,7 +386,7 @@ def worker(args: argparse.Namespace) -> int:
     if not diagnostic["root_player_control"]:
         raise SystemExit(
             "multi-enemy deterministic gate failed: fixture root is not in SMB1 "
-            f"player-control subroutine (engine=0x{diagnostic['root_engine']:02X}); "
+            f"player-control subroutine (engine=0x{int(diagnostic['root_engine']):02X}); "
             "the semantic selector must choose a controller-authoritative root"
         )
     if not diagnostic["responsive"]:
@@ -346,8 +411,18 @@ def worker(args: argparse.Namespace) -> int:
     return 0
 
 
+def _diag_worker(args: argparse.Namespace) -> int:
+    scenario_dir = args.scenario_dir.expanduser().resolve()
+    manifest = _load_manifest(scenario_dir)
+    generic = _load_generic_probe()
+    diagnostic = _diagnose_root_control(generic, args, scenario_dir, manifest)
+    print(_DIAG_MARKER + json.dumps(diagnostic, separators=(",", ":")), flush=True)
+    return 0
+
+
 def main() -> int:
-    return worker(parse_args())
+    args = parse_args()
+    return _diag_worker(args) if args.diag_worker else worker(args)
 
 
 if __name__ == "__main__":
