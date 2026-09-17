@@ -114,6 +114,29 @@ def test_collect_radar_ends_star_only_on_native_timer_proof(monkeypatch):
     assert collected["reward_collected_type"] == "star"
 
 
+def test_commit_prefix_ignores_one_frame_release_tail():
+    replay = _load_replay()
+    schedule = [
+        {"buttons": 0x82, "frames": 1},
+        {"buttons": 0x83, "frames": 3},
+        {"buttons": 0x82, "frames": 1},  # fallback release tail
+    ]
+
+    assert replay._commit_prefix_buttons(schedule, 4) == (0x82, 0x83, 0x83, 0x83)
+
+
+def test_commit_prefix_rejects_schedule_shorter_than_live_quantum():
+    replay = _load_replay()
+    schedule = [{"buttons": 0x82, "frames": 3}]
+
+    try:
+        replay._commit_prefix_buttons(schedule, 4)
+    except RuntimeError as exc:
+        assert "shorter than 4f live commit" in str(exc)
+    else:
+        raise AssertionError("short schedule must fail closed")
+
+
 def test_shutdown_core_stops_and_releases_even_if_controller_neutralize_fails(monkeypatch):
     replay = _load_replay()
     calls = []
