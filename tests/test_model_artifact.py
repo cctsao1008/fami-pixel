@@ -121,13 +121,12 @@ def test_versioned_artifact_round_trip_preserves_model_and_provenance(tmp_path):
     assert restored_manifest["root_group_key"] == ["source", "generation"]
 
 
-def test_artifact_loader_rejects_incompatible_model_feature_schema(tmp_path):
+def _complete_artifact(tmp_path: Path):
     rows = [_row(i, "run", 8) for i in range(3)]
     dataset = tmp_path / "rollouts.jsonl"
     _write_dataset(dataset, rows)
     split = {"train": rows[:1], "validation": rows[1:2], "test": rows[2:]}
     model = TinySurrogateMLP(FEATURE_VECTOR_SIZE, hidden_size=4, seed=3)
-
     artifact = write_model_artifact(
         tmp_path / "smb1-surrogate-v001",
         model=model,
@@ -154,7 +153,11 @@ def test_artifact_loader_rejects_incompatible_model_feature_schema(tmp_path):
             ood_split=split,
         ),
     )
+    return artifact
 
+
+def test_artifact_loader_rejects_incompatible_model_feature_schema(tmp_path):
+    artifact = _complete_artifact(tmp_path)
     model_path = artifact / "model.json"
     payload = json.loads(model_path.read_text(encoding="utf-8"))
     payload["feature_schema_id"] = "smb1-tiny-surrogate-features-v999"
@@ -162,6 +165,28 @@ def test_artifact_loader_rejects_incompatible_model_feature_schema(tmp_path):
 
     with pytest.raises(ValueError, match="feature schema mismatch"):
         load_model_artifact(artifact)
+
+
+def test_tiny_model_loader_rejects_wrong_input_size(tmp_path):
+    model = TinySurrogateMLP(FEATURE_VECTOR_SIZE, hidden_size=4, seed=3)
+    payload = model.to_dict()
+    payload["input_size"] = FEATURE_VECTOR_SIZE + 1
+    path = tmp_path / "wrong-input.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="input-size mismatch"):
+        TinySurrogateMLP.load_json(path)
+
+
+def test_tiny_model_loader_rejects_wrong_output_schema(tmp_path):
+    model = TinySurrogateMLP(FEATURE_VECTOR_SIZE, hidden_size=4, seed=3)
+    payload = model.to_dict()
+    payload["outputs"] = ["delta_x", "risk_probability"]
+    path = tmp_path / "wrong-output.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="output schema mismatch"):
+        TinySurrogateMLP.load_json(path)
 
 
 def test_legacy_v1_model_remains_loadable_when_shape_and_outputs_match(tmp_path):
