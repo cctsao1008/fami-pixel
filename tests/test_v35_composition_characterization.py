@@ -55,16 +55,26 @@ def test_current_installer_chain_is_v35_through_v27_before_v24_v25_v26_base():
     assert "v26._install_v26_overrides()" in v27_source
 
 
-def test_v35_replaces_only_v26_lower_delegate_after_v34_stack_is_installed():
+def test_v35_installs_lower_selector_through_stable_control_seam_after_v34_stack():
     v35 = _load_v35()
     source = inspect.getsource(v35._install_v35_overrides)
 
     assert source.index("v34._install_v34_overrides()") < source.index(
-        "v26._BASE_V25_PLAN = _best_collect_or_progress"
+        "v26.install_lower_plan_delegate(_best_collect_or_progress)"
     )
+    assert "v26._BASE_V25_PLAN = _best_collect_or_progress" not in source
     assert "v23.PLANNER_NAME = PLANNER_NAME" in source
     assert "v23.authority_main = authority_main" in source
     assert "v23.__file__ = __file__" in source
+
+
+def test_v35_installer_leaves_v26_survive_owner_and_explicitly_sets_lower_delegate():
+    v35 = _load_v35()
+    v35._install_v35_overrides()
+
+    assert v35.v23._best_forward_plan is v35.v26._best_v26_plan
+    assert v35.v26._LOWER_PLAN_DELEGATE.selector is v35._best_collect_or_progress
+    assert v35.v26._lower_plan_delegate_explicit is True
 
 
 def test_v35_star_selector_is_sync_current_root_then_v34_fallback():
