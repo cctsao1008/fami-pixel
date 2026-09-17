@@ -19,7 +19,11 @@ from typing import Callable, Iterable
 
 MAX_COMMANDS = 2
 DELTA_X_SCALE = 80.0
-MODEL_FORMAT = "fami-pixel-tiny-surrogate-v1"
+FEATURE_VECTOR_SIZE = 34
+FEATURE_SCHEMA_ID = "smb1-tiny-surrogate-features-v1"
+OUTPUT_SCHEMA = ("delta_x", "risk_probability", "no_progress_probability")
+MODEL_FORMAT = "fami-pixel-tiny-surrogate-v2"
+LEGACY_MODEL_FORMAT = "fami-pixel-tiny-surrogate-v1"
 
 
 def _button_bits(value: int) -> list[float]:
@@ -28,7 +32,7 @@ def _button_bits(value: int) -> list[float]:
 
 
 def feature_vector(record: dict) -> list[float]:
-    """Project a rollout record into a compact, runtime-friendly feature vector."""
+    """Project a rollout record into the versioned runtime feature schema."""
     start = record["start"]
     candidate = record["candidate"]
     schedule = list(candidate.get("schedule", []))
@@ -53,6 +57,12 @@ def feature_vector(record: dict) -> list[float]:
         else:
             features.extend([0.0] * 8)
             features.append(0.0)
+
+    if len(features) != FEATURE_VECTOR_SIZE:
+        raise RuntimeError(
+            f"feature schema {FEATURE_SCHEMA_ID!r} produced {len(features)} values; "
+            f"expected {FEATURE_VECTOR_SIZE}"
+        )
     return features
 
 
@@ -81,6 +91,7 @@ class TinySurrogateMLP:
     def __init__(self, input_size: int, hidden_size: int = 16, *, seed: int = 22):
         self.input_size = int(input_size)
         self.hidden_size = int(hidden_size)
+        self.feature_schema_id = FEATURE_SCHEMA_ID
         rng = random.Random(seed)
         scale_in = 1.0 / math.sqrt(max(1, self.input_size))
         scale_hidden = 1.0 / math.sqrt(max(1, self.hidden_size))
@@ -119,9 +130,10 @@ class TinySurrogateMLP:
     def to_dict(self) -> dict:
         return {
             "format": MODEL_FORMAT,
+            "feature_schema_id": self.feature_schema_id,
             "input_size": self.input_size,
             "hidden_size": self.hidden_size,
-            "outputs": ["delta_x", "risk_probability", "no_progress_probability"],
+            "outputs": list(OUTPUT_SCHEMA),
             "w1": self.w1,
             "b1": self.b1,
             "w2": self.w2,
@@ -129,12 +141,49 @@ class TinySurrogateMLP:
         }
 
     @classmethod
-    def from_dict(cls, payload: dict) -> "TinySurrogateMLP":
-        if payload.get("format") != MODEL_FORMAT:
-            raise ValueError(f"unsupported tiny surrogate format: {payload.get('format')!r}")
+    def from_dict(
+        cls,
+        payload: dict,
+        *,
+        expected_feature_schema_id: str = FEATURE_SCHEMA_ID,
+        allow_legacy: bool = True,
+    ) -> "TinySurrogateMLP":
+        model_format = payload.get("format")
+        if model_format == MODEL_FORMAT:
+            feature_schema_id = payload.get("feature_schema_id")
+            if feature_schema_id != expected_feature_schema_id:
+                raise ValueError(
+                    "tiny surrogate feature schema mismatch: "
+                    f"expected {expected_feature_schema_id!r}, got {feature_schema_id!r}"
+                )
+        elif model_format == LEGACY_MODEL_FORMAT and allow_legacy:
+            # V1 predated an explicit feature-schema field.  Its contract is
+            # compatible only with the original fixed 34-input extractor.
+            if expected_feature_schema_id != FEATURE_SCHEMA_ID:
+                raise ValueError(
+                    "legacy tiny surrogate has no explicit feature schema and "
+                    f"cannot satisfy expected schema {expected_feature_schema_id!r}"
+                )
+            feature_schema_id = FEATURE_SCHEMA_ID
+        else:
+            raise ValueError(f"unsupported tiny surrogate format: {model_format!r}")
+
+        outputs = tuple(payload.get("outputs", ()))
+        if outputs != OUTPUT_SCHEMA:
+            raise ValueError(
+                f"tiny surrogate output schema mismatch: expected {OUTPUT_SCHEMA!r}, got {outputs!r}"
+            )
+
         input_size = int(payload["input_size"])
+        if input_size != FEATURE_VECTOR_SIZE:
+            raise ValueError(
+                f"tiny surrogate input-size mismatch for {feature_schema_id!r}: "
+                f"expected {FEATURE_VECTOR_SIZE}, got {input_size}"
+            )
         hidden_size = int(payload["hidden_size"])
         model = cls(input_size, hidden_size, seed=0)
+        model.feature_schema_id = feature_schema_id
+
         w1 = [[float(value) for value in row] for row in payload["w1"]]
         b1 = [float(value) for value in payload["b1"]]
         w2 = [[float(value) for value in row] for row in payload["w2"]]
@@ -143,9 +192,9 @@ class TinySurrogateMLP:
             raise ValueError("invalid first-layer shape in tiny surrogate artifact")
         if len(b1) != hidden_size:
             raise ValueError("invalid first-layer bias shape in tiny surrogate artifact")
-        if len(w2) != 3 or any(len(row) != hidden_size for row in w2):
+        if len(w2) != len(OUTPUT_SCHEMA) or any(len(row) != hidden_size for row in w2):
             raise ValueError("invalid output-layer shape in tiny surrogate artifact")
-        if len(b2) != 3:
+        if len(b2) != len(OUTPUT_SCHEMA):
             raise ValueError("invalid output-layer bias shape in tiny surrogate artifact")
         model.w1 = w1
         model.b1 = b1
@@ -159,9 +208,19 @@ class TinySurrogateMLP:
         path.write_text(json.dumps(self.to_dict(), separators=(",", ":")), encoding="utf-8")
 
     @classmethod
-    def load_json(cls, path: Path) -> "TinySurrogateMLP":
+    def load_json(
+        cls,
+        path: Path,
+        *,
+        expected_feature_schema_id: str = FEATURE_SCHEMA_ID,
+        allow_legacy: bool = True,
+    ) -> "TinySurrogateMLP":
         payload = json.loads(Path(path).read_text(encoding="utf-8"))
-        return cls.from_dict(payload)
+        return cls.from_dict(
+            payload,
+            expected_feature_schema_id=expected_feature_schema_id,
+            allow_legacy=allow_legacy,
+        )
 
     def fit(
         self,
