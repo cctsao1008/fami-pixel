@@ -1,6 +1,7 @@
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 
 _TOOL = Path(__file__).resolve().parents[1] / "tools" / "smb1_multi_enemy_landing_probe.py"
@@ -90,3 +91,15 @@ def test_live_guard_success_requires_matching_exact_action_and_resolved_terminal
         "long_jump event=landed status=RESOLVED\n",
         extend,
     )
+
+
+def test_control_signature_tracks_authoritative_branch_state() -> None:
+    observation = SimpleNamespace(
+        mario_x_abs=1167,
+        mario_y=144,
+        game_engine_subroutine=0x08,
+        player_state=1,
+        player_x_speed=0x19,
+        player_y_speed=0xF8,
+    )
+    assert _MOD._control_signature(observation) == (1167, 144, 0x08, 1, 0x19, 0xF8)
