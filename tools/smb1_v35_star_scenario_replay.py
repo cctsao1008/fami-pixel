@@ -1,20 +1,27 @@
 #!/usr/bin/env python3
 """Deterministically replay V35's synchronous Star micro-MPC from one Mesen scenario.
 
-This is the narrow acceptance gate for issue #36.  It does not enter World 1-1,
-spawn shadow workers, or reuse historical live-run actions.  Instead it restores
+This is the narrow acceptance gate for issue #36. It does not enter World 1-1,
+spawn shadow workers, or reuse historical live-run actions. Instead it restores
 an extracted reward-visible ``root.mss`` and repeatedly applies the exact V35
 current-root Star policy:
 
-    observe current native radar
+    observe current native radar + V25 sticky COLLECT objective
       -> synchronously evaluate all V25 4f reward chunks on the live Mesen core
       -> restore the exact current root
       -> commit the selected 4f chunk
       -> reobserve and repeat
 
 PASS requires native capability evidence: ``StarInvincibleTimer`` must increase
-from the scenario-root baseline.  Power-up object disappearance is not accepted
-as collection proof.
+from the scenario-root baseline. Power-up object disappearance alone is never
+accepted as collection proof.
+
+The sticky objective is important for fidelity with the live V35 authority path.
+The ordinary forward radar may temporarily stop reporting a selected Star after
+a braking/backtracking prefix, while V25 deliberately keeps the COLLECT target
+alive for a bounded TTL using ``read_active_reward_target``. The replay mirrors
+that control-quantum behavior instead of treating one raw-radar dropout as a
+terminal target loss.
 """
 
 from __future__ import annotations
@@ -37,6 +44,8 @@ from fami_pixel.games.smb1 import (
     read_smb1_state,
 )
 from fami_pixel.games.smb1.radar import read_smb1_radar
+from fami_pixel.games.smb1.reward_live import StickyCollectObjective
+from fami_pixel.games.smb1.reward_target import read_active_reward_target
 
 
 _EXAMPLES = (Path(__file__).resolve().parents[1] / "examples").resolve()
@@ -100,8 +109,35 @@ def _restore_root(core: MesenCore, state_file: Path, manifest: dict) -> None:
     )
 
 
-def _radar(core: MesenCore, mario_x: int) -> dict:
+def _native_radar(core: MesenCore, mario_x: int) -> dict:
     return read_smb1_radar(core, player_x=int(mario_x)).to_payload()
+
+
+def _collect_radar(
+    core: MesenCore,
+    mario_x: int,
+    objective: StickyCollectObjective,
+) -> dict:
+    """Mirror V25's authority-side sticky COLLECT radar at a control boundary."""
+
+    payload = _native_radar(core, mario_x)
+    try:
+        tracked = read_active_reward_target(core, player_x=int(mario_x))
+    except Exception:
+        tracked = None
+
+    snapshot = objective.update(
+        frame=int(core.frame_count()),
+        radar=payload,
+        tracked_reward=tracked,
+    )
+    payload["objective_mode"] = snapshot["mode"]
+    payload["collect_target_type"] = snapshot["target_type"]
+    payload["collect_target"] = snapshot["target"]
+    payload["collect_target_sticky"] = bool(snapshot.get("sticky", False))
+    if snapshot.get("collected_type") is not None:
+        payload["reward_collected_type"] = snapshot["collected_type"]
+    return payload
 
 
 def _schedule_frames(schedule: list[dict] | tuple[dict, ...]):
@@ -126,8 +162,11 @@ def worker(args: argparse.Namespace) -> int:
     core.initialize_debugger()
     _restore_root(core, root_state, manifest)
 
+    objective = StickyCollectObjective(ttl_frames=int(v35.v25._LIVE_OBJECTIVE.ttl_frames))
+    objective.clear()
+
     current = observation_from_state(core.frame_count(), read_smb1_state(core))
-    root_radar = _radar(core, current.mario_x_abs)
+    root_radar = _collect_radar(core, current.mario_x_abs, objective)
     target_type = v35.v25._collect_target_from_radar(root_radar)
     if target_type != "star":
         raise SystemExit(
@@ -160,14 +199,15 @@ def worker(args: argparse.Namespace) -> int:
     )
     print(f"Baseline   : StarInvincibleTimer={baseline_timer}", flush=True)
     print(
-        "Policy     : V35 synchronous current-root 8x4f micro-MPC; commit one selected 4f chunk",
+        "Policy     : V35 synchronous current-root 8x4f micro-MPC; "
+        f"commit one selected 4f chunk; sticky_ttl={objective.ttl_frames}f",
         flush=True,
     )
 
     previous = current
     try:
         for decision in range(int(args.max_decisions)):
-            radar = _radar(core, current.mario_x_abs)
+            radar = _collect_radar(core, current.mario_x_abs, objective)
             timer_before = int(radar.get("star_invincible_timer", 0))
             if timer_before > baseline_timer:
                 print(
@@ -178,10 +218,13 @@ def worker(args: argparse.Namespace) -> int:
                 print(_DONE, flush=True)
                 return 0
 
-            if v35.v25._collect_target_from_radar(radar) != "star":
+            target_type = v35.v25._collect_target_from_radar(radar)
+            if target_type != "star":
                 raise RuntimeError(
-                    "Star target disappeared before native invincibility proof; "
-                    "object disappearance is not accepted as collection"
+                    "Sticky Star objective expired before native invincibility proof; "
+                    f"frame={current.native_frame_id} X={current.mario_x_abs} "
+                    f"nearest_reward_type={radar.get('nearest_reward_type')} "
+                    f"sticky={radar.get('collect_target_sticky')}"
                 )
 
             plan = v35._sync_star_plan(
@@ -197,6 +240,7 @@ def worker(args: argparse.Namespace) -> int:
                 f"X={current.mario_x_abs} candidate={plan.get('candidate')} "
                 f"predicted_collect={int(bool(plan.get('reward_collected', False)))} "
                 f"target_dx={plan.get('reward_target_dx')} "
+                f"sticky={int(bool(radar.get('collect_target_sticky', False)))} "
                 f"compute={float(plan.get('compute_ms', 0.0)):.1f}ms",
                 flush=True,
             )
@@ -217,7 +261,10 @@ def worker(args: argparse.Namespace) -> int:
                         f"X={current.mario_x_abs}"
                     )
 
-                live = _radar(core, current.mario_x_abs)
+                # Collection proof is always raw/native capability state. Do not
+                # update the sticky objective here; the live authority updates it
+                # once per 4f control quantum, not once per committed frame.
+                live = _native_radar(core, current.mario_x_abs)
                 timer_now = int(live.get("star_invincible_timer", 0))
                 if timer_now > baseline_timer:
                     print(
