@@ -103,3 +103,28 @@ def test_control_signature_tracks_authoritative_branch_state() -> None:
         player_y_speed=0xF8,
     )
     assert _MOD._control_signature(observation) == (1167, 144, 0x08, 1, 0x19, 0xF8)
+
+
+def test_diagnostic_command_uses_disposable_child_worker() -> None:
+    args = SimpleNamespace(
+        rom=Path("game.nes"),
+        scenario_dir=Path("scenario"),
+        dll=Path("MesenCore.dll"),
+        home=Path("mesen-home"),
+        step_timeout=2.0,
+    )
+    command = _MOD._diagnostic_command(args)
+    assert command[0] == sys.executable
+    assert "--diag-worker" in command
+    assert "--step-timeout" in command
+
+
+def test_diagnostic_payload_parser_requires_single_machine_marker() -> None:
+    output = (
+        "RootState  : engine=0x08 control=1\n"
+        "RootControlDiagnostic: {\"root_player_control\":true,\"responsive\":true,\"root_engine\":8}\n"
+    )
+    payload = _MOD._parse_diagnostic_output(output)
+    assert payload["root_player_control"] is True
+    assert payload["responsive"] is True
+    assert payload["root_engine"] == 8
