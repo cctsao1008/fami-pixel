@@ -112,3 +112,24 @@ def test_collect_radar_ends_star_only_on_native_timer_proof(monkeypatch):
     assert collected["star_invincible_timer"] == 35
     assert collected["collect_target_type"] is None
     assert collected["reward_collected_type"] == "star"
+
+
+def test_shutdown_core_stops_and_releases_even_if_controller_neutralize_fails(monkeypatch):
+    replay = _load_replay()
+    calls = []
+
+    class Core:
+        def stop(self):
+            calls.append("stop")
+
+        def release(self):
+            calls.append("release")
+
+    def fail_neutralize(*_args, **_kwargs):
+        calls.append("neutralize")
+        raise RuntimeError("synthetic controller cleanup failure")
+
+    monkeypatch.setattr(replay, "set_nes_controller_state", fail_neutralize)
+    replay._shutdown_core(Core())
+
+    assert calls == ["neutralize", "stop", "release"]
