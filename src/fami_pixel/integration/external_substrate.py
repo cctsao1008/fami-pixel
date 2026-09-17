@@ -7,6 +7,7 @@ from uuid import uuid4
 from fami_pixel.adapters.mesen import MesenCore
 from fami_pixel.adapters.mesen.fami_pixel_input import set_nes_controller_state
 from fami_pixel.games.smb1.observation import Smb1Observation, read_smb1_observation
+from fami_pixel.games.smb1.radar import Smb1RadarSnapshot, read_smb1_radar
 
 
 @dataclass(frozen=True)
@@ -15,14 +16,19 @@ class FamiObservation:
     source_identity: str
     native_frame_id: int
     smb1: Smb1Observation
+    radar: Smb1RadarSnapshot
     status: str = "OBSERVED"
-    schema_version: str = "fami.external.observation.v1"
+    schema_version: str = "fami.external.observation.v2"
 
     def __post_init__(self) -> None:
         if not self.observation_id or not self.source_identity:
             raise ValueError("observation identity and source identity are required")
         if self.native_frame_id < 0:
             raise ValueError("native_frame_id must be non-negative")
+        if self.smb1.native_frame_id != self.native_frame_id:
+            raise ValueError("SMB1 observation frame must match Fami observation frame")
+        if self.radar.player_x != self.smb1.mario_x_abs:
+            raise ValueError("radar player_x must match SMB1 mario_x_abs")
 
 
 @dataclass(frozen=True)
@@ -121,15 +127,21 @@ class LiveConsequence:
 ActionProposer = Callable[[FamiObservation], Sequence[BoundedAction]]
 RolloutProvider = Callable[[BoundedAction], ShadowRollout]
 ObservationReader = Callable[[MesenCore, int], Smb1Observation]
+RadarReader = Callable[[MesenCore, int], Smb1RadarSnapshot]
 ButtonWriter = Callable[[MesenCore, int, int], None]
+
+
+def _default_radar_reader(core: MesenCore, player_x: int) -> Smb1RadarSnapshot:
+    return read_smb1_radar(core, player_x=player_x)
 
 
 class Smb1ExternalSubstratePort:
     """Stable Fami-native port for external orchestration.
 
-    This facade exposes observation, bounded action proposal, shadow rollout,
-    bounded live execution, and realized consequence records. It intentionally
-    contains no LSMM semantic or policy types.
+    This facade exposes structured sensing, bounded action proposal, shadow
+    rollout, bounded live execution, and realized consequence records. Radar is
+    sensor evidence only; this port intentionally contains no LSMM semantic or
+    policy types and never turns hazard/reward fields into action authority.
     """
 
     def __init__(
@@ -142,6 +154,7 @@ class Smb1ExternalSubstratePort:
         action_proposer: ActionProposer | None = None,
         rollout_provider: RolloutProvider | None = None,
         observation_reader: ObservationReader = read_smb1_observation,
+        radar_reader: RadarReader = _default_radar_reader,
         button_writer: ButtonWriter = set_nes_controller_state,
     ) -> None:
         if not source_identity:
@@ -157,6 +170,7 @@ class Smb1ExternalSubstratePort:
         self._action_proposer = action_proposer
         self._rollout_provider = rollout_provider
         self._observation_reader = observation_reader
+        self._radar_reader = radar_reader
         self._button_writer = button_writer
         self._last_observation: FamiObservation | None = None
 
@@ -243,11 +257,15 @@ class Smb1ExternalSubstratePort:
     def _read_observation(self) -> FamiObservation:
         frame = int(self._core.frame_count())
         smb1 = self._observation_reader(self._core, frame)
+        radar = self._radar_reader(self._core, int(smb1.mario_x_abs))
+        if int(self._core.frame_count()) != frame:
+            raise RuntimeError("authoritative frame advanced during structured observation read")
         return FamiObservation(
             observation_id=f"fami-observation:{frame}:{uuid4()}",
             source_identity=self._source_identity,
             native_frame_id=frame,
             smb1=smb1,
+            radar=radar,
         )
 
     @staticmethod
