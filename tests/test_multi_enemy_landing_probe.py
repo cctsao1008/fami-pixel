@@ -20,6 +20,12 @@ def test_manifest_multi_enemy_count_requires_explicit_fixture_metadata() -> None
     assert _MOD.manifest_multi_enemy_count({}) == 0
 
 
+def test_expected_live_plan_follows_guard_mode() -> None:
+    assert _MOD.expected_live_plan_name("landing-zone-extend[landing:2]") == "live_cluster_extend_8"
+    assert _MOD.expected_live_plan_name("landing-zone-escape[landing:2]") == "live_cluster_jump_16"
+    assert _MOD.expected_live_plan_name("forward-model-partial[landed]") is None
+
+
 def test_output_accepts_only_generic_probe_safe_selection_marker() -> None:
     assert _MOD.output_has_safe_selection(
         "long_jump event=landed status=RESOLVED\n"
@@ -32,4 +38,26 @@ def test_output_accepts_only_generic_probe_safe_selection_marker() -> None:
     )
     assert not _MOD.output_has_safe_selection(
         "PROVISIONAL: run -> horizon\nTrajectoryProbe: DONE\n"
+    )
+
+
+def test_live_guard_success_requires_matching_exact_action_and_resolved_terminal() -> None:
+    extend = "landing-zone-extend[landing:2]"
+    escape = "landing-zone-escape[landing:2]"
+
+    assert _MOD.output_has_live_guard_success(
+        "live_cluster_extend_8 event=landed status=RESOLVED\n",
+        extend,
+    )
+    assert _MOD.output_has_live_guard_success(
+        "live_cluster_jump_16 event=win status=RESOLVED\n",
+        escape,
+    )
+    assert not _MOD.output_has_live_guard_success(
+        "live_cluster_extend_8 event=horizon status=UNRESOLVED\n",
+        extend,
+    )
+    assert not _MOD.output_has_live_guard_success(
+        "long_jump event=landed status=RESOLVED\n",
+        extend,
     )
