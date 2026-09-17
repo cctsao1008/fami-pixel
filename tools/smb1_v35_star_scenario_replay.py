@@ -9,8 +9,13 @@ current-root Star policy:
     observe current native radar + V25 sticky COLLECT objective
       -> synchronously evaluate all V25 4f reward chunks on the live Mesen core
       -> restore the exact current root
-      -> commit the selected 4f chunk
+      -> commit exactly the first live control quantum (4f)
       -> reobserve and repeat
+
+V25/V35 schedules intentionally append a 1-frame A-released continuation tail so
+live control remains safe if no replacement plan arrives. The normal V17/V35
+loop replans after the 4-frame control quantum, so this deterministic harness
+must not consume that fallback tail as part of a normal decision.
 
 PASS requires native capability evidence: ``StarInvincibleTimer`` must increase
 from the scenario-root baseline. Power-up object disappearance alone is never
@@ -150,6 +155,23 @@ def _schedule_frames(schedule: list[dict] | tuple[dict, ...]):
             yield buttons
 
 
+def _commit_prefix_buttons(
+    schedule: list[dict] | tuple[dict, ...],
+    commit_frames: int,
+) -> tuple[int, ...]:
+    """Return exactly the live commit prefix, excluding any fallback tail."""
+
+    count = int(commit_frames)
+    if count <= 0:
+        raise ValueError("commit_frames must be > 0")
+    expanded = tuple(_schedule_frames(schedule))
+    if len(expanded) < count:
+        raise RuntimeError(
+            f"selected schedule proves only {len(expanded)}f, shorter than {count}f live commit"
+        )
+    return expanded[:count]
+
+
 def _shutdown_core(core: MesenCore) -> None:
     """Best-effort native teardown; never let one cleanup failure skip Release()."""
 
@@ -181,6 +203,7 @@ def worker(args: argparse.Namespace) -> int:
 
     objective = StickyCollectObjective(ttl_frames=int(v35.v25._LIVE_OBJECTIVE.ttl_frames))
     objective.clear()
+    commit_frames = int(v35.v23.EXECUTION_PREFIX_FRAMES)
 
     current = observation_from_state(core.frame_count(), read_smb1_state(core))
     root_radar = _collect_radar(core, current.mario_x_abs, objective)
@@ -217,7 +240,8 @@ def worker(args: argparse.Namespace) -> int:
     print(f"Baseline   : StarInvincibleTimer={baseline_timer}", flush=True)
     print(
         "Policy     : V35 synchronous current-root 8x4f micro-MPC; "
-        f"commit one selected 4f chunk; sticky_ttl={objective.ttl_frames}f",
+        f"commit exactly {commit_frames}f then replan; fallback release tail not consumed; "
+        f"sticky_ttl={objective.ttl_frames}f",
         flush=True,
     )
 
@@ -262,9 +286,10 @@ def worker(args: argparse.Namespace) -> int:
                 flush=True,
             )
 
-            buttons_seq = tuple(_schedule_frames(plan.get("schedule") or ()))
-            if not buttons_seq:
-                raise RuntimeError(f"selected plan has an empty schedule: {plan.get('candidate')}")
+            buttons_seq = _commit_prefix_buttons(
+                plan.get("schedule") or (),
+                commit_frames,
+            )
 
             for buttons in buttons_seq:
                 set_nes_controller_state(core, 0, int(buttons))
@@ -280,7 +305,7 @@ def worker(args: argparse.Namespace) -> int:
 
                 # Collection proof is always raw/native capability state. Do not
                 # update the sticky objective here; the live authority updates it
-                # once per 4f control quantum, not once per committed frame.
+                # once per control quantum, not once per committed frame.
                 live = _native_radar(core, current.mario_x_abs)
                 timer_now = int(live.get("star_invincible_timer", 0))
                 if timer_now > baseline_timer:
