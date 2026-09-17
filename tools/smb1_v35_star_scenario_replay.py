@@ -150,6 +150,23 @@ def _schedule_frames(schedule: list[dict] | tuple[dict, ...]):
             yield buttons
 
 
+def _shutdown_core(core: MesenCore) -> None:
+    """Best-effort native teardown; never let one cleanup failure skip Release()."""
+
+    try:
+        set_nes_controller_state(core, 0, 0x00)
+    except Exception:
+        pass
+    try:
+        core.stop()
+    except Exception:
+        pass
+    try:
+        core.release()
+    except Exception:
+        pass
+
+
 def worker(args: argparse.Namespace) -> int:
     scenario_dir = args.scenario_dir.expanduser().resolve()
     manifest, root_state = _load_manifest(scenario_dir)
@@ -284,10 +301,7 @@ def worker(args: argparse.Namespace) -> int:
             f"Star was not collected within {int(args.max_decisions)} V35 decisions"
         )
     finally:
-        try:
-            set_nes_controller_state(core, 0, 0x00)
-        except Exception:
-            pass
+        _shutdown_core(core)
 
 
 def main() -> int:
