@@ -274,10 +274,10 @@ def authority_main(args) -> int:
 def _install_v35_overrides() -> None:
     v34._install_v34_overrides()
 
-    # Preserve V26's current-scene SURVIVE/gap/landing ordering.  Replace only
-    # the lower COLLECT/PROGRESS delegate: Star is current-root synchronous,
-    # everything else stays on the V34 asynchronous path.
-    v26._BASE_V25_PLAN = _best_collect_or_progress
+    # Preserve V26's current-scene SURVIVE/gap/landing ordering. Replace only
+    # the lower COLLECT/PROGRESS delegate through the stable control seam: Star
+    # is current-root synchronous; everything else stays on the V34 async path.
+    v26.install_lower_plan_delegate(_best_collect_or_progress)
 
     v23.PLANNER_NAME = PLANNER_NAME
     v23.authority_main = authority_main
