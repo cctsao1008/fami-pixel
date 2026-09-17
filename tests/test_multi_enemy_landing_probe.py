@@ -20,6 +20,35 @@ def test_manifest_multi_enemy_count_requires_explicit_fixture_metadata() -> None
     assert _MOD.manifest_multi_enemy_count({}) == 0
 
 
+def test_manifest_projected_cluster_requires_multi_enemy_cluster_inside_corridor() -> None:
+    clean = {
+        "selection_nearest_cluster_count": 2,
+        "selection_nearest_cluster_start_dx": 98,
+        "selection_nearest_cluster_end_dx": 136,
+        "selection_landing_corridor_start_dx": 96,
+        "selection_landing_corridor_end_dx": 160,
+    }
+    contact = {
+        "selection_nearest_cluster_count": 1,
+        "selection_nearest_cluster_start_dx": 0,
+        "selection_nearest_cluster_end_dx": 0,
+        "selection_landing_corridor_start_dx": 96,
+        "selection_landing_corridor_end_dx": 160,
+    }
+    split = {
+        "selection_nearest_cluster_count": 2,
+        "selection_nearest_cluster_start_dx": 98,
+        "selection_nearest_cluster_end_dx": 170,
+        "selection_landing_corridor_start_dx": 96,
+        "selection_landing_corridor_end_dx": 160,
+    }
+
+    assert _MOD.manifest_has_clean_projected_cluster(clean, 2)
+    assert not _MOD.manifest_has_clean_projected_cluster(contact, 2)
+    assert not _MOD.manifest_has_clean_projected_cluster(split, 2)
+    assert not _MOD.manifest_has_clean_projected_cluster({}, 2)
+
+
 def test_expected_live_plan_follows_guard_mode() -> None:
     assert _MOD.expected_live_plan_name("landing-zone-extend[landing:2]") == "live_cluster_extend_8"
     assert _MOD.expected_live_plan_name("landing-zone-escape[landing:2]") == "live_cluster_jump_16"
