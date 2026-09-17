@@ -68,11 +68,24 @@ def test_v35_installs_lower_selector_through_stable_control_seam_after_v34_stack
     assert "v23.__file__ = __file__" in source
 
 
-def test_v35_installer_leaves_v26_survive_owner_and_explicitly_sets_lower_delegate():
+def test_v35_installer_preserves_v28_authority_plan_wrapper_over_v26_survive_owner():
     v35 = _load_v35()
     v35._install_v35_overrides()
+    v28 = v35.v34.v28
 
-    assert v35.v23._best_forward_plan is v35.v26._best_v26_plan
+    # V28 intentionally remains the V23-facing wrapper because it remembers the
+    # schedule actually selected by V26 for future exact COLLECT continuation
+    # handoffs.  That wrapper must still delegate policy to V26 rather than
+    # becoming a separate safety owner.
+    assert v35.v23._best_forward_plan is v28._best_v28_plan
+    assert v28._BASE_V26_PLAN is v35.v26._best_v26_plan
+    wrapper_source = inspect.getsource(v28._best_v28_plan)
+    assert "result = _BASE_V26_PLAN(" in wrapper_source
+    assert "_remember_authority_plan(result)" in wrapper_source
+
+    # The lower COLLECT/PROGRESS dependency is the part migrated to the stable
+    # explicit seam.  SURVIVE/gap/landing still execute inside V26 before this
+    # delegate can be reached.
     assert v35.v26._LOWER_PLAN_DELEGATE.selector is v35._best_collect_or_progress
     assert v35.v26._lower_plan_delegate_explicit is True
 
@@ -104,4 +117,4 @@ def test_v35_authority_wrapper_delegates_to_v34_and_restores_controller_setter()
     assert "base.set_nes_controller_state = capture_authority_core" in source
     assert "return v34.authority_main(args)" in source
     assert "finally:" in source
-    assert "base.set_nes_controller_state = original_set_controller" in source
+    assert "base.set_nes_controller_state = original_set_controller"
