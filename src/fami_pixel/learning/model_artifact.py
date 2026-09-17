@@ -263,11 +263,26 @@ def load_model_artifact(
 
     if metadata.get("format") != ARTIFACT_FORMAT:
         raise ValueError(f"unsupported surrogate artifact format: {metadata.get('format')!r}")
+    if metadata.get("model_format") != MODEL_FORMAT:
+        raise ValueError(
+            f"metadata model format mismatch: expected {MODEL_FORMAT!r}, "
+            f"got {metadata.get('model_format')!r}"
+        )
     if metrics.get("format") != METRICS_FORMAT:
         raise ValueError(f"unsupported surrogate metrics format: {metrics.get('format')!r}")
     if manifest.get("format") != DATASET_MANIFEST_FORMAT:
         raise ValueError(
             f"unsupported surrogate dataset manifest format: {manifest.get('format')!r}"
+        )
+    if int(manifest.get("rollout_schema_version", -1)) != ROLLOUT_SCHEMA_VERSION:
+        raise ValueError(
+            "dataset manifest rollout schema mismatch: "
+            f"expected {ROLLOUT_SCHEMA_VERSION}, got {manifest.get('rollout_schema_version')!r}"
+        )
+    if manifest.get("target_schema_id") != TARGET_SCHEMA_ID:
+        raise ValueError(
+            f"dataset manifest target schema mismatch: expected {TARGET_SCHEMA_ID!r}, "
+            f"got {manifest.get('target_schema_id')!r}"
         )
 
     for name, payload in (("metadata", metadata), ("dataset manifest", manifest)):
