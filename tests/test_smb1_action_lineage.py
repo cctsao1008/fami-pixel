@@ -132,3 +132,21 @@ def test_collect_prefix_can_use_reward_safety_bit_without_laundering_progress_se
     assert collect_result.valid is True
     assert collect_result.source_age == 8
     assert collect_result.proof_remaining_frames == 16
+
+
+def test_suspend_recording_preserves_authority_history_and_is_nest_safe():
+    ledger = AuthorityActionLedger()
+    ledger.record(100, 0x82)
+
+    with ledger.suspend_recording():
+        ledger.record(100, 0x00)
+        ledger.record(101, 0x00)
+        with ledger.suspend_recording():
+            ledger.record(102, 0x83)
+
+    assert ledger.buttons_between(100, 101) == (0x82,)
+    assert ledger.buttons_between(101, 102) is None
+    assert ledger.buttons_between(102, 103) is None
+
+    ledger.record(101, 0x83)
+    assert ledger.buttons_between(100, 102) == (0x82, 0x83)
