@@ -30,6 +30,20 @@ class GameEvent:
 
 _GROUNDED_PLAYER_STATE = 0
 _JUMP_PLAYER_STATE = 1
+_FALL_PLAYER_STATE = 2
+_AIRBORNE_PLAYER_STATES = frozenset({_JUMP_PLAYER_STATE, _FALL_PLAYER_STATE})
+
+
+def is_airborne_player_state(player_state: int) -> bool:
+    """Return whether SMB1 native Player_State is in an airborne phase.
+
+    Repository field evidence uses state 1 for jump/ascent and state 2 for
+    descent/fall.  Landing therefore must accept either airborne state -> 0;
+    restricting LANDED to 1 -> 0 misses roots that are already descending.
+    """
+
+    return int(player_state) in _AIRBORNE_PLAYER_STATES
+
 
 # SMB1 GameRoutines dispatch + machine evidence:
 #   $05 -> PlayerEndLevel
@@ -77,7 +91,7 @@ def derive_game_events(
             )
         )
     elif (
-        previous.player_state == _JUMP_PLAYER_STATE
+        is_airborne_player_state(previous.player_state)
         and current.player_state == _GROUNDED_PLAYER_STATE
     ):
         events.append(
