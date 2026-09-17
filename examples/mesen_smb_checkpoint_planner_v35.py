@@ -45,7 +45,7 @@ _SYNC_STEP_TIMEOUT = 2.0
 _SYNC_CHECKPOINT = Path("build/checkpoints/v35-sync-star-current.mss")
 
 
-def _sync_star_plan(core, *, current_frame: int, live_radar: dict) -> dict | None:
+def _sync_star_plan_untracked(core, *, current_frame: int, live_radar: dict) -> dict | None:
     """Evaluate V25's reward chunks from the exact current live Mesen root."""
 
     target_type = v25._collect_target_from_radar(live_radar)
@@ -189,6 +189,26 @@ def _sync_star_plan(core, *, current_frame: int, live_radar: dict) -> dict | Non
     return result
 
 
+def _sync_star_plan(core, *, current_frame: int, live_radar: dict) -> dict | None:
+    """Run current-root Star speculation without mutating authority action history.
+
+    V27 instruments ``base.set_nes_controller_state`` to record the final input
+    used for each real ``frame -> frame+1`` transition.  Base checkpoint helpers
+    intentionally write NOOP before save/load, but V35 uses those helpers while
+    exploring counterfactual futures without advancing live authority.  Keep the
+    whole synchronous micro-search outside the ledger so speculative save/restore
+    controller writes can never masquerade as authoritative history.
+    """
+
+    ledger = v34.v27._AUTHORITY_ACTION_LEDGER
+    with ledger.suspend_recording():
+        return _sync_star_plan_untracked(
+            core,
+            current_frame=int(current_frame),
+            live_radar=live_radar,
+        )
+
+
 def _best_collect_or_progress(
     response_paths,
     current_frame: int,
@@ -237,9 +257,8 @@ def authority_main(args) -> int:
 
     # V27 installs its action-ledger wrapper later in the authority chain.  It
     # will call this capture wrapper as its original setter, so actual authority
-    # actions are still recorded exactly once.  V25's branch evaluator uses the
-    # adapter setter directly, therefore simulated futures do not pollute the
-    # authority ledger.
+    # actions are still recorded exactly once.  V35 explicitly suspends ledger
+    # writes across its synchronous speculative save/restore/search scope.
     base.set_nes_controller_state = capture_authority_core
     v11._log(
         "Planner V35: synchronous current-root Star micro-MPC enabled | "
