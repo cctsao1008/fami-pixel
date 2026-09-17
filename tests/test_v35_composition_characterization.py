@@ -117,4 +117,4 @@ def test_v35_authority_wrapper_delegates_to_v34_and_restores_controller_setter()
     assert "base.set_nes_controller_state = capture_authority_core" in source
     assert "return v34.authority_main(args)" in source
     assert "finally:" in source
-    assert "base.set_nes_controller_state = original_set_controller"
+    assert "base.set_nes_controller_state = original_set_controller" in source
