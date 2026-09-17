@@ -18,7 +18,7 @@ from enum import Enum
 from fami_pixel.adapters.mesen import MesenCore, set_nes_controller_state
 
 from .actions import ActionCommand, Smb1Action, action_to_nes_buttons
-from .events import GameEventType, derive_game_events
+from .events import GameEventType, derive_game_events, is_airborne_player_state
 from .observation import Smb1Observation, observation_from_state
 from .radar import read_smb1_radar
 from .state import read_smb1_state
@@ -190,7 +190,7 @@ def evaluate_mesen_trajectory(
     current = start_observation
     current_radar = start_radar
     max_x = start_observation.mario_x_abs
-    airborne_seen = start_observation.player_state == 1
+    airborne_seen = is_airborne_player_state(start_observation.player_state)
     event = TrajectoryEvent.HORIZON
     landed = False
     died = False
@@ -213,7 +213,7 @@ def evaluate_mesen_trajectory(
                 player_x=current.mario_x_abs,
             ).to_payload()
             max_x = max(max_x, current.mario_x_abs)
-            if current.player_state == 1:
+            if is_airborne_player_state(current.player_state):
                 airborne_seen = True
 
             events = derive_game_events(previous, current)
