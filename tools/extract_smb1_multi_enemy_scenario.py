@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-"""Extract a deterministic SMB1 scenario at an active multi-enemy landing guard.
+"""Extract a deterministic SMB1 scenario at a clean projected multi-enemy landing guard.
 
 This is a semantic wrapper over ``extract_smb1_scenario.py`` for issue #38.
-The default selector requires both:
+The default selector requires all of the following:
 
-- ``landing_enemy_count >= N``; and
-- the live planner actually selected a ``landing-zone-*`` guard at that control root.
+- ``landing_enemy_count >= N``;
+- the live planner actually selected a ``landing-zone-*`` guard; and
+- the nearest enemy cluster itself contains at least ``N`` enemies and lies
+  fully inside the configured landing corridor.
 
-That distinction matters. Merely observing two enemies in the fixed landing
-corridor can occur at incidental/non-actionable states. The deterministic gate
-should replay the state where the live landing policy actually took authority,
-without hard-coding a World 1-1 X coordinate.
+That last constraint rejects current-contact/transient states such as
+``cluster:1@0..0`` even when two other enemies happen to occupy the landing
+corridor. The named regression is intended to exercise a projected multi-Goomba
+landing hazard, not an already-overlapping enemy contact state. No World 1-1 X
+coordinate is hard-coded.
 """
 
 from __future__ import annotations
@@ -36,21 +39,34 @@ def _load_timeline(path: Path) -> list[dict]:
     return records
 
 
-def landing_enemy_count(record: dict) -> int:
-    """Read landing-corridor enemy count from either timeline or radar metadata."""
+def _field(record: dict, key: str):
+    """Read one landing field from timeline top level first, then radar metadata."""
 
     for source in (record, record.get("radar") or {}):
         try:
-            value = source.get("landing_enemy_count")
+            value = source.get(key)
         except AttributeError:
             continue
-        if value is None:
-            continue
-        try:
-            return max(0, int(value))
-        except (TypeError, ValueError):
-            continue
-    return 0
+        if value is not None:
+            return value
+    return None
+
+
+def _int_field(record: dict, key: str, default: int | None = None) -> int | None:
+    value = _field(record, key)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def landing_enemy_count(record: dict) -> int:
+    """Read landing-corridor enemy count from either timeline or radar metadata."""
+
+    value = _int_field(record, "landing_enemy_count", 0)
+    return max(0, int(value or 0))
 
 
 def landing_guard_mode(record: dict) -> str:
@@ -66,11 +82,32 @@ def is_active_landing_guard(record: dict) -> bool:
     return landing_guard_mode(record).startswith("landing-zone-")
 
 
+def projected_cluster_fields(record: dict) -> tuple[int, int | None, int | None, int, int]:
+    """Return nearest-cluster count/range and configured landing corridor."""
+
+    count = max(0, int(_int_field(record, "nearest_cluster_count", 0) or 0))
+    start = _int_field(record, "nearest_cluster_start_dx")
+    end = _int_field(record, "nearest_cluster_end_dx")
+    near = int(_int_field(record, "landing_corridor_start_dx", 96) or 96)
+    far = int(_int_field(record, "landing_corridor_end_dx", 160) or 160)
+    return count, start, end, near, far
+
+
+def is_clean_projected_multi_enemy_cluster(record: dict, minimum: int) -> bool:
+    """Require the nearest multi-enemy cluster itself to lie in the landing corridor."""
+
+    count, start, end, near, far = projected_cluster_fields(record)
+    if count < int(minimum) or start is None or end is None:
+        return False
+    return near <= start <= end <= far
+
+
 def select_multi_enemy_record(
     records: list[dict],
     minimum: int,
     *,
     require_active_guard: bool = True,
+    require_projected_cluster: bool = True,
 ) -> dict:
     if minimum <= 0:
         raise ValueError("minimum must be > 0")
@@ -78,9 +115,22 @@ def select_multi_enemy_record(
     matches = [record for record in records if landing_enemy_count(record) >= int(minimum)]
     if require_active_guard:
         matches = [record for record in matches if is_active_landing_guard(record)]
+    if require_projected_cluster:
+        matches = [
+            record
+            for record in matches
+            if is_clean_projected_multi_enemy_cluster(record, int(minimum))
+        ]
 
     if not matches:
-        suffix = " with an active landing-zone guard" if require_active_guard else ""
+        qualifiers: list[str] = []
+        if require_active_guard:
+            qualifiers.append("an active landing-zone guard")
+        if require_projected_cluster:
+            qualifiers.append("a nearest multi-enemy cluster fully inside the landing corridor")
+        suffix = ""
+        if qualifiers:
+            suffix = " with " + " and ".join(qualifiers)
         raise SystemExit(
             f"no timeline record has landing_enemy_count >= {int(minimum)}{suffix}"
         )
@@ -89,7 +139,7 @@ def select_multi_enemy_record(
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Extract a deterministic SMB1 scenario at an active multi-enemy landing event"
+        description="Extract a deterministic SMB1 scenario at a clean projected multi-enemy landing event"
     )
     p.add_argument("timeline", type=Path, help="live-run timeline.jsonl")
     p.add_argument("checkpoint_dir", help="matching Runtime IPC run-* directory, or literal 'auto'")
@@ -104,8 +154,17 @@ def parse_args() -> argparse.Namespace:
         "--allow-passive-count-only",
         action="store_true",
         help=(
-            "allow an incidental landing_enemy_count match even when the live planner did not "
-            "select a landing-zone guard; not recommended for #38 acceptance"
+            "diagnostic mode: allow an incidental landing_enemy_count match even when the live "
+            "planner did not select a landing-zone guard; clean projected-cluster semantics "
+            "remain required"
+        ),
+    )
+    p.add_argument(
+        "--allow-contact-or-split-cluster-root",
+        action="store_true",
+        help=(
+            "diagnostic mode: do not require the nearest multi-enemy cluster to lie fully "
+            "inside the landing corridor; not valid for #38 acceptance"
         ),
     )
     p.add_argument(
@@ -131,10 +190,12 @@ def worker(args: argparse.Namespace) -> int:
     timeline = args.timeline.expanduser().resolve()
     records = _load_timeline(timeline)
     require_active_guard = not bool(args.allow_passive_count_only)
+    require_projected_cluster = not bool(args.allow_contact_or_split_cluster_root)
     selected = select_multi_enemy_record(
         records,
         int(args.landing_enemies_at_least),
         require_active_guard=require_active_guard,
+        require_projected_cluster=require_projected_cluster,
     )
     generation = int(selected.get("generation", -1))
     if generation < 0:
@@ -142,9 +203,14 @@ def worker(args: argparse.Namespace) -> int:
 
     count = landing_enemy_count(selected)
     guard = landing_guard_mode(selected)
+    cluster_count, cluster_start, cluster_end, corridor_start, corridor_end = projected_cluster_fields(
+        selected
+    )
     print(
         f"MultiEnemy : generation={generation} frame={selected.get('native_frame')} "
-        f"X={selected.get('mario_x')} landing_enemy_count={count} guard={guard or '-'}",
+        f"X={selected.get('mario_x')} landing_enemy_count={count} "
+        f"cluster={cluster_count}@{cluster_start}..{cluster_end} "
+        f"corridor={corridor_start}..{corridor_end} guard={guard or '-'}",
         flush=True,
     )
 
@@ -175,11 +241,18 @@ def worker(args: argparse.Namespace) -> int:
             manifest["selection_landing_enemies_at_least"] = int(args.landing_enemies_at_least)
             manifest["selection_guard_mode"] = guard or None
             manifest["selection_action"] = selected.get("action")
-            manifest["selection_policy"] = (
-                "active-landing-guard+enemy-count"
-                if require_active_guard
-                else "landing-enemy-count"
-            )
+            manifest["selection_nearest_cluster_count"] = int(cluster_count)
+            manifest["selection_nearest_cluster_start_dx"] = cluster_start
+            manifest["selection_nearest_cluster_end_dx"] = cluster_end
+            manifest["selection_landing_corridor_start_dx"] = int(corridor_start)
+            manifest["selection_landing_corridor_end_dx"] = int(corridor_end)
+            if require_active_guard and require_projected_cluster:
+                selection_policy = "active-landing-guard+projected-multi-enemy-cluster"
+            elif require_active_guard:
+                selection_policy = "active-landing-guard+enemy-count"
+            else:
+                selection_policy = "landing-enemy-count"
+            manifest["selection_policy"] = selection_policy
             manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
         except (OSError, json.JSONDecodeError):
             pass
