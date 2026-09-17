@@ -48,15 +48,23 @@ def test_sync_star_search_is_root_exact_and_restores_after_every_branch(monkeypa
 
     save_calls = []
     restore_calls = []
+    ledger = v35.v34.v27._AUTHORITY_ACTION_LEDGER
+    ledger.clear()
+    ledger.record(99, 0x82)
 
     def fake_save(core, path):
         assert core is fake_core
         save_calls.append(path)
+        # This mimics the instrumented base checkpoint helper touching the pad at
+        # the current frame. It must be suppressed because no authority frame is
+        # being advanced by the synchronous search.
+        ledger.record(100, 0x00)
         return 100, 1600, 5
 
     def fake_restore(core, path, frame, x, engine):
         assert core is fake_core
         assert (frame, x, engine) == (100, 1600, 5)
+        ledger.record(104, 0x00)
         restore_calls.append(path)
 
     def fake_eval(core, chunk, *, target_type, request_radar, step_timeout):
@@ -94,6 +102,11 @@ def test_sync_star_search_is_root_exact_and_restores_after_every_branch(monkeypa
     assert len(save_calls) == 1
     # One restore before every exact branch plus one mandatory final restore.
     assert len(restore_calls) == len(chunks) + 1
+    # Historical authority remains, while speculative current/future writes never
+    # enter lineage history.
+    assert ledger.buttons_between(99, 100) == (0x82,)
+    assert ledger.buttons_between(100, 101) is None
+    assert ledger.buttons_between(104, 105) is None
 
 
 def test_sync_star_root_mismatch_never_rebases(monkeypatch, tmp_path):
