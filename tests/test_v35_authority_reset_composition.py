@@ -88,18 +88,24 @@ def test_current_authority_reset_plan_executes_concrete_dependencies_in_order(mo
     ]
 
 
-def test_v35_owns_outer_reset_prefix_and_enters_remaining_authority_at_v32():
+def test_v35_owns_outer_reset_prefix_through_v32_and_enters_at_v30():
     v35 = _load_v35()
     source = inspect.getsource(v35.authority_main)
 
-    assert '_AUTHORITY_RUN_RESET_PLAN.reset_through("v33-deadline-cache")' in source
-    assert "return _V32.authority_main(args)" in source
+    assert '_AUTHORITY_RUN_RESET_PLAN.reset_through("v32-collect-response-cache")' in source
+    assert "return _V30.authority_main(args)" in source
+    assert "return _V32.authority_main(args)" not in source
     assert "return v34.authority_main(args)" not in source
 
     # Historical example runners retain their standalone reset behavior; current
-    # V35 simply no longer enters through those two wrappers.
+    # V35 simply no longer enters through these three reset/log wrappers.
     assert "_install_handoff_cache().clear()" in inspect.getsource(v35.v34.authority_main)
     assert "_install_deadline_cache().clear()" in inspect.getsource(v35._V33.authority_main)
+    assert "v29._COLLECT_RESPONSE_CACHE.clear()" in inspect.getsource(v35._V32.authority_main)
+
+    # Do not deduplicate the historical V32/V29 reset pair during extraction.
+    # V35 owns the former V32 call; V29 still owns the second call deeper down.
+    assert "_COLLECT_RESPONSE_CACHE.clear()" in inspect.getsource(v35._V29.authority_main)
 
 
 def test_v35_outer_reset_transfer_runs_each_owned_reset_once_and_bypasses_wrappers(
@@ -116,8 +122,10 @@ def test_v35_outer_reset_transfer_runs_each_owned_reset_once_and_bypasses_wrappe
         def clear(self):
             calls.append(self.name)
 
+    collect = Clearable("collect")
     monkeypatch.setattr(v35.v34, "_install_handoff_cache", lambda: Clearable("handoff"))
     monkeypatch.setattr(v35._V33, "_install_deadline_cache", lambda: Clearable("deadline"))
+    monkeypatch.setattr(v35._V29, "_COLLECT_RESPONSE_CACHE", collect)
     monkeypatch.setattr(v35.v11, "_log", lambda *_args, **_kwargs: None)
 
     def forbidden(_args):
@@ -125,16 +133,17 @@ def test_v35_outer_reset_transfer_runs_each_owned_reset_once_and_bypasses_wrappe
 
     monkeypatch.setattr(v35.v34, "authority_main", forbidden)
     monkeypatch.setattr(v35._V33, "authority_main", forbidden)
+    monkeypatch.setattr(v35._V32, "authority_main", forbidden)
 
     def delegated(_args):
-        calls.append("v32")
+        calls.append("v30")
         return 23
 
-    monkeypatch.setattr(v35._V32, "authority_main", delegated)
+    monkeypatch.setattr(v35._V30, "authority_main", delegated)
 
     args = SimpleNamespace(
         step_timeout=1.0,
         checkpoint_dir=tmp_path / "checkpoints" / "live.mss",
     )
     assert v35.authority_main(args) == 23
-    assert calls == ["handoff", "deadline", "v32"]
+    assert calls == ["handoff", "deadline", "collect", "v30"]
