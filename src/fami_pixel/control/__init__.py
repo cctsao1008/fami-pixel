@@ -1,7 +1,12 @@
 """Stable live-control composition helpers."""
 
 from .authority_plan import AuthorityPlanMemory
-from .authority_runtime import AuthorityRuntimeScope, authority_action_recording_layer
+from .authority_runtime import (
+    AuthorityRunResetPlan,
+    AuthorityRuntimeScope,
+    NamedRunReset,
+    authority_action_recording_layer,
+)
 from .collect_status import (
     selected_collect_anchor_meta,
     selected_eager_collect_meta,
@@ -27,11 +32,13 @@ from .response_intake import read_available_responses
 __all__ = [
     "AuthorityContinuationRequestEnricher",
     "AuthorityPlanMemory",
+    "AuthorityRunResetPlan",
     "AuthorityRuntimeScope",
     "CollectProgressControl",
     "CollectProgressDecision",
     "EagerCollectControl",
     "EagerCollectDecision",
+    "NamedRunReset",
     "PlanDelegateSlot",
     "RequestPayloadEnricherSlot",
     "authority_action_recording_layer",
