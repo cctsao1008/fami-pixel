@@ -2,9 +2,9 @@
 
 The historical planner chain still supplies several concrete implementations while
 #35 is being migrated.  This module makes those dependencies explicit and binds
-them behind one stable control object, so current selectors do not reach through
-versioned modules for cache wiring, worker coverage, proof horizons, or lineage
-state during every decision.
+them behind stable control objects, so current selectors do not reach through
+versioned modules for cache wiring, worker coverage, proof horizons, objective
+detection, PROGRESS fallback, or lineage state during every decision.
 """
 
 from __future__ import annotations
@@ -20,6 +20,8 @@ from .response_intake import ResponseReader, read_available_responses
 CacheProvider = Callable[[], CollectResponseCache]
 ActiveWorkerSelector = Callable[[int], Iterable[int]]
 ProofHorizonSelector = Callable[[int], int]
+CollectTargetSelector = Callable[[Mapping], str | None]
+ProgressSelector = Callable[[Sequence[Path], int, int, int, Mapping], dict | None]
 
 
 @dataclass(frozen=True)
@@ -73,4 +75,76 @@ class EagerCollectControl:
             proof_selector=self.proof_selector,
             ledger=self.ledger,
             commit_frames=int(self.commit_frames),
+        )
+
+
+@dataclass(frozen=True)
+class CollectProgressDecision:
+    """Lower-objective result below SURVIVE authority.
+
+    ``meta`` is present only for the stable asynchronous COLLECT path.  Historical
+    PROGRESS selection remains responsible for its existing telemetry side effects
+    until that policy is extracted separately.
+    """
+
+    plan: dict | None
+    meta: dict | None
+    target_type: str | None
+
+
+@dataclass(frozen=True)
+class CollectProgressControl:
+    """Explicit lower-objective composition for COLLECT versus PROGRESS.
+
+    This object does not own SURVIVE/preemption ordering.  It binds the current
+    reward-target detector, historical PROGRESS selector, and stable eager-COLLECT
+    controller behind one dependency boundary so the current runner no longer
+    reaches through historical modules for objective detection or fallback.
+    """
+
+    target_selector: CollectTargetSelector
+    progress_selector: ProgressSelector
+    eager_collect: EagerCollectControl
+
+    def target_type(self, live_radar: Mapping | None) -> str | None:
+        radar = {} if live_radar is None else live_radar
+        target = self.target_selector(radar)
+        return None if target is None else str(target)
+
+    def decide(
+        self,
+        response_paths: Sequence[Path],
+        *,
+        current_frame: int,
+        freshness: int,
+        last_applied_generation: int,
+        target_type: str | None,
+        live_radar: Mapping | None,
+    ) -> CollectProgressDecision:
+        """Choose historical PROGRESS or stable asynchronous COLLECT control."""
+
+        radar = {} if live_radar is None else live_radar
+        if target_type is None:
+            plan = self.progress_selector(
+                response_paths,
+                int(current_frame),
+                int(freshness),
+                int(last_applied_generation),
+                radar,
+            )
+            return CollectProgressDecision(plan=plan, meta=None, target_type=None)
+
+        target = str(target_type)
+        decision = self.eager_collect.decide(
+            response_paths,
+            current_frame=int(current_frame),
+            freshness=int(freshness),
+            last_applied_generation=int(last_applied_generation),
+            target_type=target,
+            live_radar=radar,
+        )
+        return CollectProgressDecision(
+            plan=decision.plan,
+            meta=decision.meta,
+            target_type=target,
         )
