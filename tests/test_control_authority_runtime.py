@@ -1,6 +1,7 @@
 import pytest
 
-from fami_pixel.control import AuthorityRuntimeScope
+from fami_pixel.control import AuthorityRuntimeScope, authority_action_recording_layer
+from fami_pixel.games.smb1.action_lineage import AuthorityActionLedger
 
 
 def test_authority_runtime_scope_preserves_reset_order():
@@ -87,3 +88,45 @@ def test_nested_controller_layers_preserve_v35_v27_installation_semantics():
             assert calls == ["lineage", "capture", "base"]
         assert holder["setter"] is capture_setter
     assert holder["setter"] is base
+
+
+def test_authority_action_recording_layer_matches_v27_port0_and_suspension_contract():
+    class Core:
+        frame = 42
+
+        def frame_count(self):
+            return self.frame
+
+    core = Core()
+    ledger = AuthorityActionLedger(max_entries=8)
+    calls = []
+
+    def base(current_core, port, buttons):
+        calls.append((current_core.frame_count(), port, buttons))
+        return buttons
+
+    holder = {"setter": base}
+    scope = AuthorityRuntimeScope(
+        get_controller_setter=lambda: holder["setter"],
+        install_controller_setter=lambda setter: holder.__setitem__("setter", setter),
+    )
+
+    with scope.controller_layer(authority_action_recording_layer(ledger)):
+        assert holder["setter"](core, 0, 0x81) == 0x81
+        assert ledger.buttons_between(42, 43) == (0x81,)
+
+        core.frame = 43
+        assert holder["setter"](core, 1, 0x40) == 0x40
+        assert ledger.buttons_between(43, 44) is None
+
+        with ledger.suspend_recording():
+            assert holder["setter"](core, 0, 0x82) == 0x82
+        assert ledger.buttons_between(43, 44) is None
+
+    assert holder["setter"] is base
+    assert calls == [(42, 0, 0x81), (43, 1, 0x40), (43, 0, 0x82)]
+
+
+def test_authority_action_recording_layer_rejects_non_ledger_dependency():
+    with pytest.raises(TypeError, match="record"):
+        authority_action_recording_layer(object())
