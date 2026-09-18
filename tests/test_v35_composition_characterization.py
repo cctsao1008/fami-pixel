@@ -149,12 +149,13 @@ def test_v35_sync_speculation_uses_composed_authority_ledger():
     assert "v34.v27._AUTHORITY_ACTION_LEDGER" not in source
 
 
-def test_v35_authority_wrapper_delegates_to_v34_and_restores_controller_setter():
+def test_v35_authority_wrapper_uses_stable_runtime_scope_before_v34_delegate():
     v35 = _load_v35()
     source = inspect.getsource(v35.authority_main)
 
-    assert "original_set_controller = base.set_nes_controller_state" in source
-    assert "base.set_nes_controller_state = capture_authority_core" in source
+    assert type(v35._AUTHORITY_RUNTIME_SCOPE).__module__ == "fami_pixel.control.authority_runtime"
+    assert "with _AUTHORITY_RUNTIME_SCOPE.controller_layer(capture_layer):" in source
     assert "return v34.authority_main(args)" in source
-    assert "finally:" in source
-    assert "base.set_nes_controller_state = original_set_controller" in source
+    assert "_LIVE_AUTHORITY_CORE = None" in source
+    assert "base.set_nes_controller_state = capture_authority_core" not in source
+    assert "base.set_nes_controller_state = original_set_controller" not in source
