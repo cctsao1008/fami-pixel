@@ -91,7 +91,7 @@ def test_current_authority_reset_plan_executes_concrete_dependencies_in_order(mo
     ]
 
 
-def test_v35_owns_runtime_resets_through_v25_and_enters_captured_v23_authority():
+def test_v35_owns_runtime_resets_through_v25_then_bootstraps_v23_into_v17():
     v35 = _load_v35()
     source = inspect.getsource(v35.authority_main)
 
@@ -105,7 +105,8 @@ def test_v35_owns_runtime_resets_through_v25_and_enters_captured_v23_authority()
     lineage = "authority_action_recording_layer(_V27._AUTHORITY_ACTION_LEDGER)"
     v26_reset = '_AUTHORITY_RUN_RESET_PLAN.reset_named("v26-gap-commitment")'
     v25_reset = '_AUTHORITY_RUN_RESET_PLAN.reset_named("v25-live-objective")'
-    delegate = "return _BASE_V23_AUTHORITY(args)"
+    bootstrap = "bootstrap = _V23_BOOTSTRAP_SETUP_PLAN.setup_run_state(args)"
+    delegate = "return _V17.authority_main(args)"
 
     for token in (
         prefix,
@@ -118,6 +119,7 @@ def test_v35_owns_runtime_resets_through_v25_and_enters_captured_v23_authority()
         lineage,
         v26_reset,
         v25_reset,
+        bootstrap,
         delegate,
     ):
         assert token in source
@@ -132,8 +134,10 @@ def test_v35_owns_runtime_resets_through_v25_and_enters_captured_v23_authority()
         < source.index(lineage)
         < source.index(v26_reset)
         < source.index(v25_reset)
+        < source.index(bootstrap)
         < source.index(delegate)
     )
+    assert "return v23.authority_main(args)" not in source
     assert "return v26._BASE_V25_AUTHORITY(args)" not in source
     assert "return v26.authority_main(args)" not in source
     assert "return _V27.authority_main(args)" not in source
@@ -156,9 +160,11 @@ def test_v35_owns_runtime_resets_through_v25_and_enters_captured_v23_authority()
     assert "return _BASE_V24_AUTHORITY(args)" in historical_v25
     historical_v24 = inspect.getsource(v35._V24.authority_main)
     assert "return _BASE_AUTHORITY_MAIN(args)" in historical_v24
+    historical_v23 = inspect.getsource(v35.v23.authority_main)
+    assert "return v17.authority_main(args)" in historical_v23
 
 
-def test_v35_preserves_runtime_order_while_bypassing_v29_through_v24(
+def test_v35_preserves_runtime_order_while_bypassing_v29_through_v23(
     monkeypatch,
     tmp_path,
 ):
@@ -179,6 +185,14 @@ def test_v35_preserves_runtime_order_while_bypassing_v29_through_v24(
         "_AUTHORITY_RUN_SETUP_PLAN",
         SimpleNamespace(setup_run_state=lambda _args: calls.append(("setup", "v30"))),
     )
+    monkeypatch.setattr(
+        v35,
+        "_V23_BOOTSTRAP_SETUP_PLAN",
+        SimpleNamespace(
+            setup_run_state=lambda _args: calls.append(("setup", "v23"))
+            or {"v23-runtime-dir": Path("test-runtime")}
+        ),
+    )
 
     def forbidden(_args):
         raise AssertionError("bypassed historical wrapper was invoked")
@@ -189,18 +203,19 @@ def test_v35_preserves_runtime_order_while_bypassing_v29_through_v24(
     monkeypatch.setattr(v35.v26, "authority_main", forbidden)
     monkeypatch.setattr(v35.v25, "authority_main", forbidden)
     monkeypatch.setattr(v35._V24, "authority_main", forbidden)
+    monkeypatch.setattr(v35.v23, "authority_main", forbidden)
 
     def delegated(_args):
-        calls.append(("delegate", "v23"))
-        return 23
+        calls.append(("delegate", "v17"))
+        return 17
 
-    monkeypatch.setattr(v35, "_BASE_V23_AUTHORITY", delegated)
+    monkeypatch.setattr(v35._V17, "authority_main", delegated)
 
     args = SimpleNamespace(
         step_timeout=1.0,
         checkpoint_dir=tmp_path / "checkpoints" / "live.mss",
     )
-    assert v35.authority_main(args) == 23
+    assert v35.authority_main(args) == 17
     assert calls == [
         ("reset-through", "v32-collect-response-cache"),
         ("setup", "v30"),
@@ -210,5 +225,6 @@ def test_v35_preserves_runtime_order_while_bypassing_v29_through_v24(
         ("reset-named", "v27-authority-action-ledger"),
         ("reset-named", "v26-gap-commitment"),
         ("reset-named", "v25-live-objective"),
-        ("delegate", "v23"),
+        ("setup", "v23"),
+        ("delegate", "v17"),
     ]
