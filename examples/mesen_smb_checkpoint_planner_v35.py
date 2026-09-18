@@ -25,11 +25,11 @@ remain above this lower COLLECT delegate, and V34's asynchronous worker/search
 machinery stays available for non-Star/fallback operation while objective routing,
 PROGRESS fallback, async COLLECT authority scan, controller instrumentation,
 V34/V33/V32/V29/V28/V27/V26/V25 run-start resets, V30 proof-horizon setup, V28
-checkpoint request enrichment, V27 authority-action lineage recording, and V23
-bootstrap/setup are now bound through stable control composition. Historical
-V26/V25/V24/V23 authority wrappers are bypassed by the active path; their
-run-scoped reset/setup/log responsibilities are reproduced here before entering
-V17's live authority loop. V26's SURVIVE policy remains active in its selector.
+checkpoint request enrichment, V27 authority-action lineage recording, V23
+bootstrap/setup, and the live per-frame authority loop are now bound through
+stable control composition. Historical V26/V25/V24/V23/V17 authority wrappers
+remain available for provenance, but the active path enters ``LiveAuthorityControl``
+directly. V26's SURVIVE policy remains active in its selector.
 """
 
 from __future__ import annotations
@@ -44,6 +44,7 @@ from fami_pixel.control import (
     AuthorityRuntimeScope,
     CollectProgressControl,
     EagerCollectControl,
+    LiveAuthorityControl,
     NamedRunReset,
     NamedRunSetup,
     authority_action_recording_layer,
@@ -189,6 +190,71 @@ def _setup_v23_live_stack(_args) -> None:
     v23._install_forward_overrides()
 
 
+def _prepare_v17_live_run(args) -> Path:
+    """Preserve V17's run-local model/risk/cache setup before the stable loop."""
+
+    if args.surrogate_model is None:
+        raise SystemExit("V17 requires --surrogate-model <trained JSON artifact>")
+    model_path = args.surrogate_model.expanduser().resolve()
+    if not model_path.is_file():
+        raise SystemExit(f"surrogate model not found: {model_path}")
+    args.surrogate_model = model_path
+
+    _V17.v14._RISK_CUTOFF = float(args.surrogate_risk_cutoff)
+    _V17.v13._RISK_PENALTY = float(args.surrogate_risk_penalty)
+    _V17.v13._STALL_PENALTY = float(args.surrogate_no_progress_penalty)
+    _V17.v13._DX_WEIGHT = float(args.surrogate_dx_weight)
+    _V17.v12.reset_response_cache()
+    return model_path
+
+
+def _build_live_authority_control() -> LiveAuthorityControl:
+    """Bind the installed V17-era providers to the stable authority loop.
+
+    This factory is intentionally called *after* V23/V20 setup. Those historical
+    installers still provide the current concrete watchdog/radar/evidence/worker
+    functions, but they no longer own the live per-frame control loop itself.
+    """
+
+    return LiveAuthorityControl(
+        prepare_run=_prepare_v17_live_run,
+        create_recorder=_V17._create_recorder,
+        spawn_workers=_V17.v15._spawn_shadow_workers,
+        core_factory=_V17.MesenCore,
+        configure_controller=_V17.configure_standard_nes_controller,
+        enter_world=base.enter_world_1_1,
+        observe_state=lambda core, state: _V17.observation_from_state(
+            core.frame_count(), state
+        ),
+        read_state=_V17.read_smb1_state,
+        derive_events=_V17.derive_game_events,
+        set_controller_state=base.set_nes_controller_state,
+        step_core=base.step,
+        read_radar=_V17.read_smb1_radar,
+        radar_reason=_V17.v15._radar_reason,
+        select_plan=_V17.v16.best_coherent_live_radar_plan,
+        looks_grounded=_V17.v16._looks_grounded,
+        emergency_jump_plan=_V17.v16._emergency_jump_plan,
+        schedule_buttons=v11._schedule_buttons,
+        schedule_label=_V17.v14._schedule_label,
+        save_checkpoint=base.save_checkpoint,
+        publish_json=v11._atomic_json,
+        append_timeline=_V17._append_timeline,
+        persist_terminal=_V17._persist_terminal,
+        viewer_factory=_V17.NesWebViewer,
+        format_radar_strip=_V17.format_radar_strip,
+        log=v11._log,
+        bootstrap_schedule=v11.BOOTSTRAP_SCHEDULE,
+        jump_names=_V17.v15._JUMP_NAMES,
+        radar_lookahead_px=int(_V17.v15.RADAR_LOOKAHEAD_PX),
+        enemy_trigger_px=int(_V17.v15.RADAR_ENEMY_TRIGGER_PX),
+        gap_trigger_px=int(_V17.v15.RADAR_GAP_TRIGGER_PX),
+        obstacle_trigger_px=int(_V17.v15.RADAR_OBSTACLE_TRIGGER_PX),
+        risk_cutoff=lambda: float(_V17.v14._RISK_CUTOFF),
+        ui_stride=int(_V17.UI_STRIDE),
+    )
+
+
 def _v28_checkpoint_request_enricher() -> AuthorityContinuationRequestEnricher:
     """Bind V28 continuation memory to the stable checkpoint-request seam."""
 
@@ -266,8 +332,6 @@ def _sync_star_plan_untracked(core, *, current_frame: int, live_radar: dict) -> 
 
     root_frame, root_x, root_engine = base.save_checkpoint(core, checkpoint)
     if int(root_frame) != int(current_frame):
-        # Never invent a rebase if the captured core is not exactly the selector
-        # root. Restore and let the asynchronous fallback handle it.
         base.restore_checkpoint(core, checkpoint, root_frame, root_x, root_engine)
         v23._latest_forward_meta = {
             "forward_model_status": "sync-star-root-mismatch",
@@ -314,7 +378,6 @@ def _sync_star_plan_untracked(core, *, current_frame: int, live_radar: dict) -> 
                 best_chunk = chunk
                 best_outcome = outcome
     finally:
-        # Candidate futures are never allowed to become machine truth.
         base.restore_checkpoint(core, checkpoint, root_frame, root_x, root_engine)
 
     total_ms = (time.perf_counter() - started) * 1000.0
@@ -337,9 +400,6 @@ def _sync_star_plan_untracked(core, *, current_frame: int, live_radar: dict) -> 
     reward_key = list(best_outcome["reward_key"])
 
     result = {
-        # This is a current-root authority-local proof, not an asynchronous worker
-        # generation. Keeping generation=-1 prevents it from consuming unrelated
-        # shadow generations in V17's response bookkeeping.
         "generation": -1,
         "worker": "authority-sync-star",
         "root_frame": int(root_frame),
@@ -398,15 +458,7 @@ def _sync_star_plan_untracked(core, *, current_frame: int, live_radar: dict) -> 
 
 
 def _sync_star_plan(core, *, current_frame: int, live_radar: dict) -> dict | None:
-    """Run current-root Star speculation without mutating authority action history.
-
-    V27 instruments ``base.set_nes_controller_state`` to record the final input
-    used for each real ``frame -> frame+1`` transition. Base checkpoint helpers
-    intentionally write NOOP before save/load, but V35 uses those helpers while
-    exploring counterfactual futures without advancing live authority. Keep the
-    whole synchronous micro-search outside the ledger so speculative save/restore
-    controller writes can never masquerade as authoritative history.
-    """
+    """Run current-root Star speculation without mutating authority action history."""
 
     ledger = _COLLECT_PROGRESS_CONTROL.eager_collect.ledger
     with ledger.suspend_recording():
@@ -450,7 +502,7 @@ def _best_collect_or_progress(
 
 
 def authority_main(args) -> int:
-    """Run current authority with stable outer reset/setup and controller ownership."""
+    """Run current authority with stable reset/setup/instrumentation/loop ownership."""
 
     global _LIVE_AUTHORITY_CORE, _SYNC_STEP_TIMEOUT, _SYNC_CHECKPOINT
     _LIVE_AUTHORITY_CORE = None
@@ -468,25 +520,12 @@ def authority_main(args) -> int:
 
         return capture_authority_core
 
-    # Current V35 owns both controller instrumentation layers. The inner lineage
-    # recorder wraps the live-core capture setter installed by this outer scope,
-    # preserving the historical invocation order recording -> capture -> base.
-    # Synchronous Star speculation separately suspends ledger writes while it
-    # saves/restores/explores counterfactual futures.
     v11._log(
         "Planner V35: synchronous current-root Star micro-MPC enabled | "
         "pause live frames during 8x4f exact reward search; V26 SURVIVE remains higher authority"
     )
     try:
         with _AUTHORITY_RUNTIME_SCOPE.controller_layer(capture_layer):
-            # Preserve the historical runtime order exactly while transferring
-            # ownership: V32's first COLLECT-cache clear happens in the stable
-            # prefix, V30 installs the proof horizon, V29 performs the second
-            # cache clear, V28 clears current-plan memory and installs request
-            # enrichment, V27 clears PROGRESS/lineage state and installs the
-            # authority-action recorder, V26 clears its run-scoped gap commitment,
-            # V25 clears its sticky live objective, then stable V23 bootstrap
-            # setup prepares the historical V17 live authority loop.
             _AUTHORITY_RUN_RESET_PLAN.reset_through("v32-collect-response-cache")
             v11._log(
                 "Planner V34: eager COLLECT handoffs enabled | "
@@ -554,7 +593,8 @@ def authority_main(args) -> int:
                         "Forward model: Mesen outcomes are final branch authority; "
                         "async source age is recorded and only the short action prefix is rebased live"
                     )
-                    return _V17.authority_main(args)
+                    live_control = _build_live_authority_control()
+                    return live_control.run(args)
     finally:
         _LIVE_AUTHORITY_CORE = None
 
@@ -562,9 +602,6 @@ def authority_main(args) -> int:
 def _install_v35_overrides() -> None:
     v34._install_v34_overrides()
 
-    # Preserve V26's current-scene SURVIVE/gap/landing ordering. Replace only
-    # the lower COLLECT/PROGRESS delegate through the stable control seam: Star
-    # is current-root synchronous; lower objective routing is stable control.
     v26.install_lower_plan_delegate(_best_collect_or_progress)
 
     v23.PLANNER_NAME = PLANNER_NAME
