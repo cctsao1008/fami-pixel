@@ -86,7 +86,7 @@ def test_current_authority_reset_plan_executes_concrete_dependencies_in_order(mo
     ]
 
 
-def test_v35_owns_v27_resets_inside_v28_enrichment_and_enters_v26():
+def test_v35_owns_runtime_resets_through_v26_and_enters_captured_v25_authority():
     v35 = _load_v35()
     source = inspect.getsource(v35.authority_main)
 
@@ -98,7 +98,8 @@ def test_v35_owns_v27_resets_inside_v28_enrichment_and_enters_v26():
     v27_progress = '_AUTHORITY_RUN_RESET_PLAN.reset_named("v27-progress-response-cache")'
     v27_ledger = '_AUTHORITY_RUN_RESET_PLAN.reset_named("v27-authority-action-ledger")'
     lineage = "authority_action_recording_layer(_V27._AUTHORITY_ACTION_LEDGER)"
-    delegate = "return v26.authority_main(args)"
+    v26_reset = '_AUTHORITY_RUN_RESET_PLAN.reset_named("v26-gap-commitment")'
+    delegate = "return v26._BASE_V25_AUTHORITY(args)"
 
     for token in (
         prefix,
@@ -109,6 +110,7 @@ def test_v35_owns_v27_resets_inside_v28_enrichment_and_enters_v26():
         v27_progress,
         v27_ledger,
         lineage,
+        v26_reset,
         delegate,
     ):
         assert token in source
@@ -121,8 +123,10 @@ def test_v35_owns_v27_resets_inside_v28_enrichment_and_enters_v26():
         < source.index(v27_progress)
         < source.index(v27_ledger)
         < source.index(lineage)
+        < source.index(v26_reset)
         < source.index(delegate)
     )
+    assert "return v26.authority_main(args)" not in source
     assert "return _V27.authority_main(args)" not in source
     assert "return _V28.authority_main(args)" not in source
     assert "return _V29.authority_main(args)" not in source
@@ -135,9 +139,12 @@ def test_v35_owns_v27_resets_inside_v28_enrichment_and_enters_v26():
     historical_v27 = inspect.getsource(v35._V27.authority_main)
     assert "_PROGRESS_RESPONSE_CACHE.clear()" in historical_v27
     assert "_AUTHORITY_ACTION_LEDGER.clear()" in historical_v27
+    historical_v26 = inspect.getsource(v35.v26.authority_main)
+    assert "_reset_gap_commitment()" in historical_v26
+    assert "return _BASE_V25_AUTHORITY(args)" in historical_v26
 
 
-def test_v35_preserves_runtime_order_while_bypassing_v29_v28_v27(
+def test_v35_preserves_runtime_order_while_bypassing_v29_v28_v27_v26(
     monkeypatch,
     tmp_path,
 ):
@@ -165,12 +172,13 @@ def test_v35_preserves_runtime_order_while_bypassing_v29_v28_v27(
     monkeypatch.setattr(v35._V29, "authority_main", forbidden)
     monkeypatch.setattr(v35._V28, "authority_main", forbidden)
     monkeypatch.setattr(v35._V27, "authority_main", forbidden)
+    monkeypatch.setattr(v35.v26, "authority_main", forbidden)
 
     def delegated(_args):
-        calls.append(("delegate", "v26"))
+        calls.append(("delegate", "v25"))
         return 23
 
-    monkeypatch.setattr(v35.v26, "authority_main", delegated)
+    monkeypatch.setattr(v35.v26, "_BASE_V25_AUTHORITY", delegated)
 
     args = SimpleNamespace(
         step_timeout=1.0,
@@ -184,5 +192,6 @@ def test_v35_preserves_runtime_order_while_bypassing_v29_v28_v27(
         ("reset-named", "v28-authority-plan-memory"),
         ("reset-named", "v27-progress-response-cache"),
         ("reset-named", "v27-authority-action-ledger"),
-        ("delegate", "v26"),
+        ("reset-named", "v26-gap-commitment"),
+        ("delegate", "v25"),
     ]
