@@ -33,23 +33,42 @@ def test_v28_declares_delay_compensated_collect_contract():
     assert v28.CONTINUATION_CANDIDATE == "collect_continue_authority"
 
 
-def test_v28_projects_current_plan_from_real_phase():
+def test_v28_projects_current_plan_from_real_phase_through_stable_memory():
     v28 = _load_v28()
-    v28._LATEST_AUTHORITY_PLAN = {
-        "root_frame": 200,
-        "candidate": "fm_brake_jump",
-        "schedule": [
-            {"buttons": 0x42, "frames": 4},
-            {"buttons": 0x00, "frames": 2},
-            {"buttons": 0x82, "frames": 1},
-            {"buttons": 0x83, "frames": 15},
-            {"buttons": 0x82, "frames": 1},
-        ],
-    }
+    v28._AUTHORITY_PLAN_MEMORY.clear()
+    assert v28._AUTHORITY_PLAN_MEMORY.remember(
+        {
+            "root_frame": 200,
+            "candidate": "fm_brake_jump",
+            "schedule": [
+                {"buttons": 0x42, "frames": 4},
+                {"buttons": 0x00, "frames": 2},
+                {"buttons": 0x82, "frames": 1},
+                {"buttons": 0x83, "frames": 15},
+                {"buttons": 0x82, "frames": 1},
+            ],
+        }
+    )
     continuation = v28._continuation_schedule_for_frame(208)
     assert continuation
     # At source age 8 the exact brake-jump schedule is already in RIGHT+A+B.
     assert continuation[0]["buttons"] == 0x83
+
+
+def test_v28_remember_authority_plan_uses_stable_control_memory():
+    v28 = _load_v28()
+    v28._AUTHORITY_PLAN_MEMORY.clear()
+    v28._remember_authority_plan(
+        {
+            "root_frame": 300,
+            "candidate": "candidate-a",
+            "schedule": [{"buttons": 0x82, "frames": 8}],
+        }
+    )
+    snapshot = v28._AUTHORITY_PLAN_MEMORY.snapshot
+    assert snapshot is not None
+    assert snapshot["root_frame"] == 300
+    assert snapshot["candidate"] == "candidate-a"
 
 
 def test_v28_installer_replaces_only_lower_collect_progress_delegate_and_worker():
