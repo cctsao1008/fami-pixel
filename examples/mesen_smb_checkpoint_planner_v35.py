@@ -22,8 +22,9 @@ Because the game does not advance while this micro-search runs, the selected
 proof is rooted at the actual current authority frame.  No stale rebase, delayed
 handoff, or action-lineage guess is involved.  V26 SURVIVE/gap/landing guards
 remain above this lower COLLECT delegate, and V34's asynchronous worker/search
-machinery stays available for non-Star/fallback operation while its authority
-scan and dependencies are now bound through stable control composition.
+machinery stays available for non-Star/fallback operation while objective routing,
+PROGRESS fallback, and async COLLECT authority scan are now bound through stable
+control composition.
 """
 
 from __future__ import annotations
@@ -31,7 +32,7 @@ from __future__ import annotations
 from pathlib import Path
 import time
 
-from fami_pixel.control import EagerCollectControl
+from fami_pixel.control import CollectProgressControl, EagerCollectControl
 
 import mesen_smb_checkpoint_planner as base
 import mesen_smb_checkpoint_planner_v11 as v11
@@ -58,9 +59,9 @@ def _proof_horizon_for_freshness(freshness: int) -> int:
     )
 
 
-# Transitional composition root for the current asynchronous COLLECT path.
+# Transitional composition roots for the current lower objective path.
 # Historical modules still provide concrete implementations, but the selector
-# below no longer discovers those dependencies by reaching through V34 globals.
+# below no longer discovers those dependencies through transitive module globals.
 _EAGER_COLLECT_CONTROL = EagerCollectControl(
     response_reader=v11._read_json,
     cache_provider=v34._install_handoff_cache,
@@ -71,12 +72,17 @@ _EAGER_COLLECT_CONTROL = EagerCollectControl(
     proof_horizon_frames=_proof_horizon_for_freshness,
     commit_frames=v23.EXECUTION_PREFIX_FRAMES,
 )
+_COLLECT_PROGRESS_CONTROL = CollectProgressControl(
+    target_selector=v25._collect_target_from_radar,
+    progress_selector=v34.v27._best_forward_plan_partial_v27,
+    eager_collect=_EAGER_COLLECT_CONTROL,
+)
 
 
 def _sync_star_plan_untracked(core, *, current_frame: int, live_radar: dict) -> dict | None:
     """Evaluate V25's reward chunks from the exact current live Mesen root."""
 
-    target_type = v25._collect_target_from_radar(live_radar)
+    target_type = _COLLECT_PROGRESS_CONTROL.target_type(live_radar)
     if target_type != "star":
         return None
 
@@ -228,7 +234,7 @@ def _sync_star_plan(core, *, current_frame: int, live_radar: dict) -> dict | Non
     controller writes can never masquerade as authoritative history.
     """
 
-    ledger = _EAGER_COLLECT_CONTROL.ledger
+    ledger = _COLLECT_PROGRESS_CONTROL.eager_collect.ledger
     with ledger.suspend_recording():
         return _sync_star_plan_untracked(
             core,
@@ -244,9 +250,9 @@ def _best_collect_or_progress(
     last_applied_generation: int,
     live_radar: dict,
 ):
-    """Use synchronous Star MPC and stable async COLLECT orchestration otherwise."""
+    """Use synchronous Star MPC above explicit COLLECT/PROGRESS composition."""
 
-    target_type = v25._collect_target_from_radar(live_radar)
+    target_type = _COLLECT_PROGRESS_CONTROL.target_type(live_radar)
     if target_type == "star" and _LIVE_AUTHORITY_CORE is not None:
         result = _sync_star_plan(
             _LIVE_AUTHORITY_CORE,
@@ -256,16 +262,7 @@ def _best_collect_or_progress(
         if result is not None:
             return result
 
-    if target_type is None:
-        return v34.v27._best_forward_plan_partial_v27(
-            response_paths,
-            current_frame,
-            freshness,
-            last_applied_generation,
-            live_radar,
-        )
-
-    decision = _EAGER_COLLECT_CONTROL.decide(
+    decision = _COLLECT_PROGRESS_CONTROL.decide(
         response_paths,
         current_frame=current_frame,
         freshness=freshness,
@@ -273,7 +270,8 @@ def _best_collect_or_progress(
         target_type=target_type,
         live_radar=live_radar,
     )
-    v23._latest_forward_meta = decision.meta
+    if decision.meta is not None:
+        v23._latest_forward_meta = decision.meta
     return decision.plan
 
 
@@ -316,7 +314,7 @@ def _install_v35_overrides() -> None:
 
     # Preserve V26's current-scene SURVIVE/gap/landing ordering. Replace only
     # the lower COLLECT/PROGRESS delegate through the stable control seam: Star
-    # is current-root synchronous; async COLLECT selection is stable control.
+    # is current-root synchronous; lower objective routing is stable control.
     v26.install_lower_plan_delegate(_best_collect_or_progress)
 
     v23.PLANNER_NAME = PLANNER_NAME
