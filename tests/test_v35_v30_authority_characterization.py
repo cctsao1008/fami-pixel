@@ -63,7 +63,7 @@ def test_v30_proof_horizon_is_installed_before_v29_authority_delegate(monkeypatc
     assert calls[1] == ("delegate", 37)
 
 
-def test_current_v35_keeps_v30_setup_before_v29_and_v28_transferred_runtime():
+def test_current_v35_keeps_v30_setup_before_transferred_v29_v28_v27_runtime():
     v35 = _load_v35()
     source = inspect.getsource(v35.authority_main)
 
@@ -72,7 +72,10 @@ def test_current_v35_keeps_v30_setup_before_v29_and_v28_transferred_runtime():
     assert "_AUTHORITY_RUN_SETUP_PLAN.setup_run_state(args)" in source
     assert '_AUTHORITY_RUN_RESET_PLAN.reset_named("v29-collect-response-cache")' in source
     assert '_AUTHORITY_RUN_RESET_PLAN.reset_named("v28-authority-plan-memory")' in source
-    assert "return _V27.authority_main(args)" in source
+    assert '_AUTHORITY_RUN_RESET_PLAN.reset_named("v27-progress-response-cache")' in source
+    assert '_AUTHORITY_RUN_RESET_PLAN.reset_named("v27-authority-action-ledger")' in source
+    assert "return v26.authority_main(args)" in source
+    assert "return _V27.authority_main(args)" not in source
     assert "return _V28.authority_main(args)" not in source
     assert "return _V29.authority_main(args)" not in source
     assert "return _V30.authority_main(args)" not in source
@@ -82,7 +85,7 @@ def test_current_v35_keeps_v30_setup_before_v29_and_v28_transferred_runtime():
     assert "return v29.authority_main(args)" in historical
 
 
-def test_v35_stable_v30_setup_runs_before_v29_v28_resets_and_v27_delegate(monkeypatch, tmp_path):
+def test_v35_stable_v30_setup_runs_before_transferred_lower_runtime(monkeypatch, tmp_path):
     v35 = _load_v35()
     calls = []
 
@@ -102,7 +105,7 @@ def test_v35_stable_v30_setup_runs_before_v29_v28_resets_and_v27_delegate(monkey
         calls.append(("delegate", int(v35._V28.COLLECT_PROOF_HORIZON)))
         return 29
 
-    monkeypatch.setattr(v35._V27, "authority_main", delegated)
+    monkeypatch.setattr(v35.v26, "authority_main", delegated)
 
     args = SimpleNamespace(
         step_timeout=1.0,
@@ -118,5 +121,14 @@ def test_v35_stable_v30_setup_runs_before_v29_v28_resets_and_v27_delegate(monkey
     )
     v29_reset_index = calls.index(("v29-collect-response-cache", 41))
     v28_reset_index = calls.index(("v28-authority-plan-memory", 41))
+    v27_progress_index = calls.index(("v27-progress-response-cache", 41))
+    v27_ledger_index = calls.index(("v27-authority-action-ledger", 41))
     delegate_index = calls.index(("delegate", 41))
-    assert v30_log_index < v29_reset_index < v28_reset_index < delegate_index
+    assert (
+        v30_log_index
+        < v29_reset_index
+        < v28_reset_index
+        < v27_progress_index
+        < v27_ledger_index
+        < delegate_index
+    )
