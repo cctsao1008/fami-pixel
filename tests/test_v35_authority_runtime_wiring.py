@@ -64,7 +64,7 @@ def test_v35_authority_scope_captures_live_core_and_restores_predecessor(monkeyp
         assert v35._LIVE_AUTHORITY_CORE is core
         return 17
 
-    monkeypatch.setattr(v35._V32, "authority_main", delegated)
+    monkeypatch.setattr(v35._V30, "authority_main", delegated)
 
     assert v35.authority_main(_args(tmp_path)) == 17
     assert base_calls == [(captured["core"], 0, 0x82)]
@@ -91,7 +91,7 @@ def test_v35_authority_scope_restores_controller_and_live_core_on_delegate_error
         assert v35._LIVE_AUTHORITY_CORE is core
         raise RuntimeError("delegated authority failed")
 
-    monkeypatch.setattr(v35._V32, "authority_main", delegated)
+    monkeypatch.setattr(v35._V30, "authority_main", delegated)
 
     with pytest.raises(RuntimeError, match="delegated authority failed"):
         v35.authority_main(_args(tmp_path))
