@@ -46,6 +46,33 @@ def test_authority_run_reset_plan_preserves_named_order_and_duplicate_targets():
     assert calls == ["collect", "collect", "lineage"]
 
 
+def test_authority_run_reset_plan_can_transfer_only_an_ordered_prefix():
+    calls = []
+    plan = AuthorityRunResetPlan(
+        steps=(
+            NamedRunReset("outer-a", lambda: calls.append("a")),
+            NamedRunReset("outer-b", lambda: calls.append("b")),
+            NamedRunReset("inner", lambda: calls.append("inner")),
+        )
+    )
+
+    plan.reset_through("outer-b")
+
+    assert calls == ["a", "b"]
+
+
+def test_authority_run_reset_plan_validates_prefix_target_before_side_effects():
+    calls = []
+    plan = AuthorityRunResetPlan(
+        steps=(NamedRunReset("known", lambda: calls.append("known")),)
+    )
+
+    with pytest.raises(KeyError, match="unknown"):
+        plan.reset_through("missing")
+
+    assert calls == []
+
+
 def test_authority_run_reset_plan_rejects_duplicate_step_names():
     reset = lambda: None
     with pytest.raises(ValueError, match="unique"):
