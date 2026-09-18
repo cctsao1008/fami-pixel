@@ -49,7 +49,7 @@ def test_v23_authority_is_bootstrap_setup_then_v17_delegate_not_the_live_loop():
     assert "base.save_checkpoint(core" not in source
 
 
-def test_v17_is_the_actual_live_authority_loop_boundary_below_v23():
+def test_historical_v17_remains_the_reference_live_loop_for_provenance():
     v35 = _load_v35()
     source = inspect.getsource(v35.v23.v17.authority_main)
 
@@ -65,7 +65,7 @@ def test_v17_is_the_actual_live_authority_loop_boundary_below_v23():
     assert "worker.wait(timeout=0.5)" in source
 
 
-def test_current_v35_extracts_v23_bootstrap_and_enters_v17_live_loop_directly():
+def test_current_v35_extracts_v23_bootstrap_and_enters_stable_live_loop():
     v35 = _load_v35()
     source = inspect.getsource(v35.authority_main)
 
@@ -80,8 +80,9 @@ def test_current_v35_extracts_v23_bootstrap_and_enters_v17_live_loop_directly():
     assert 'runtime_dir = bootstrap["v23-runtime-dir"]' in source
     assert 'v11._log(f"Runtime IPC : {runtime_dir}")' in source
     assert '"Planner V23: live Mesen forward model enabled | "' in source
-    assert "return _V17.authority_main(args)" in source
-    assert "return _BASE_V23_AUTHORITY(args)" not in source
+    assert "live_control = _build_live_authority_control()" in source
+    assert "return live_control.run(args)" in source
+    assert "return _V17.authority_main(args)" not in source
     assert "return v23.authority_main(args)" not in source
     assert v35._V17 is v35.v23.v17
 
