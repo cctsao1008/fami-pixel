@@ -105,16 +105,30 @@ def test_v35_async_collect_dependencies_are_explicitly_composed():
     assert control.proof_horizon_frames is v35._proof_horizon_for_freshness
 
 
-def test_v35_star_selector_is_sync_current_root_then_stable_async_collect_control():
+def test_v35_collect_progress_dependencies_are_explicitly_composed():
+    v35 = _load_v35()
+    control = v35._COLLECT_PROGRESS_CONTROL
+
+    assert type(control).__module__ == "fami_pixel.control.composition"
+    assert control.target_selector is v35.v25._collect_target_from_radar
+    assert control.progress_selector is v35.v34.v27._best_forward_plan_partial_v27
+    assert control.eager_collect is v35._EAGER_COLLECT_CONTROL
+
+
+def test_v35_star_selector_is_sync_current_root_then_stable_collect_progress_control():
     v35 = _load_v35()
     source = inspect.getsource(v35._best_collect_or_progress)
 
+    assert "_COLLECT_PROGRESS_CONTROL.target_type(live_radar)" in source
     assert 'target_type == "star"' in source
     assert "_LIVE_AUTHORITY_CORE is not None" in source
     assert "_sync_star_plan(" in source
-    assert "_EAGER_COLLECT_CONTROL.decide(" in source
+    assert "_COLLECT_PROGRESS_CONTROL.decide(" in source
     assert "v23._latest_forward_meta = decision.meta" in source
     assert "return decision.plan" in source
+    assert "v25._collect_target_from_radar(" not in source
+    assert "v34.v27._best_forward_plan_partial_v27(" not in source
+    assert "_EAGER_COLLECT_CONTROL.decide(" not in source
     assert "read_available_responses(" not in source
     assert "select_eager_collect_decision(" not in source
     assert "v34._install_handoff_cache(" not in source
@@ -129,7 +143,7 @@ def test_v35_sync_speculation_uses_composed_authority_ledger():
     v35 = _load_v35()
     source = inspect.getsource(v35._sync_star_plan)
 
-    assert "_EAGER_COLLECT_CONTROL.ledger" in source
+    assert "_COLLECT_PROGRESS_CONTROL.eager_collect.ledger" in source
     assert "with ledger.suspend_recording():" in source
     assert "_sync_star_plan_untracked(" in source
     assert "v34.v27._AUTHORITY_ACTION_LEDGER" not in source
