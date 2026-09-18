@@ -23,8 +23,9 @@ proof is rooted at the actual current authority frame.  No stale rebase, delayed
 handoff, or action-lineage guess is involved.  V26 SURVIVE/gap/landing guards
 remain above this lower COLLECT delegate, and V34's asynchronous worker/search
 machinery stays available for non-Star/fallback operation while objective routing,
-PROGRESS fallback, async COLLECT authority scan, and the outer live-core capture
-scope are now bound through stable control composition.
+PROGRESS fallback, async COLLECT authority scan, controller instrumentation, and
+the outer V34/V33 run-start resets are now bound through stable control
+composition.
 """
 
 from __future__ import annotations
@@ -344,7 +345,7 @@ def _best_collect_or_progress(
 
 
 def authority_main(args) -> int:
-    """Capture the live authority core through the stable controller scope."""
+    """Run current authority with stable outer reset and controller ownership."""
 
     global _LIVE_AUTHORITY_CORE, _SYNC_STEP_TIMEOUT, _SYNC_CHECKPOINT
     _LIVE_AUTHORITY_CORE = None
@@ -362,17 +363,31 @@ def authority_main(args) -> int:
 
         return capture_authority_core
 
-    # V27 installs its action-ledger wrapper later in the authority chain.  It
-    # wraps the setter visible inside this stable scope, so real authority calls
-    # remain recording -> capture -> base.  V35 separately suspends ledger writes
-    # across synchronous speculative save/restore/search.
+    # V27 installs its action-ledger wrapper later in the remaining historical
+    # authority chain.  It wraps the setter visible inside this stable scope, so
+    # real authority calls remain recording -> capture -> base.  V35 separately
+    # suspends ledger writes across synchronous speculative save/restore/search.
     v11._log(
         "Planner V35: synchronous current-root Star micro-MPC enabled | "
         "pause live frames during 8x4f exact reward search; V26 SURVIVE remains higher authority"
     )
     try:
         with _AUTHORITY_RUNTIME_SCOPE.controller_layer(capture_layer):
-            return v34.authority_main(args)
+            # Current V35 owns the two outer run-start resets. Historical V34 and
+            # V33 runners remain untouched for standalone provenance, but the
+            # current authority path bypasses their reset/log-only wrappers and
+            # enters at V32 after performing this exact ordered prefix once.
+            _AUTHORITY_RUN_RESET_PLAN.reset_through("v33-deadline-cache")
+            v11._log(
+                "Planner V34: eager COLLECT handoffs enabled | "
+                f"handoffs={v34.COLLECT_HANDOFF_FRAMES}; progressive worker publish; "
+                "per-branch first-seen deadlines; lineage + proof lease remain authoritative"
+            )
+            v11._log(
+                "Planner V33: authority-observed COLLECT deadline enabled | "
+                f"deadline={_V33._DEADLINE_FRAMES}f; late workers remain telemetry-only and cannot reopen cohorts"
+            )
+            return _V32.authority_main(args)
     finally:
         _LIVE_AUTHORITY_CORE = None
 
