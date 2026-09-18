@@ -142,14 +142,21 @@ def test_v35_sync_speculation_uses_composed_authority_ledger():
     assert "v34.v27._AUTHORITY_ACTION_LEDGER" not in source
 
 
-def test_v35_authority_wrapper_uses_stable_runtime_scope_reset_setup_and_lineage():
+def test_v35_authority_wrapper_uses_stable_runtime_scope_reset_setup_bootstrap_and_lineage():
     v35 = _load_v35()
     source = inspect.getsource(v35.authority_main)
 
     assert type(v35._AUTHORITY_RUNTIME_SCOPE).__module__ == "fami_pixel.control.authority_runtime"
     assert type(v35._AUTHORITY_RUN_RESET_PLAN).__module__ == "fami_pixel.control.authority_runtime"
     assert type(v35._AUTHORITY_RUN_SETUP_PLAN).__module__ == "fami_pixel.control.authority_runtime"
+    assert type(v35._V23_BOOTSTRAP_SETUP_PLAN).__module__ == "fami_pixel.control.authority_runtime"
     assert v35._AUTHORITY_RUN_SETUP_PLAN.names == ("v30-collect-proof-horizon",)
+    assert v35._V23_BOOTSTRAP_SETUP_PLAN.names == (
+        "v23-process-job",
+        "v23-surrogate-model",
+        "v23-runtime-dir",
+        "v23-live-stack",
+    )
     assert "with _AUTHORITY_RUNTIME_SCOPE.controller_layer(capture_layer):" in source
     assert '_AUTHORITY_RUN_RESET_PLAN.reset_through("v32-collect-response-cache")' in source
     assert "_AUTHORITY_RUN_SETUP_PLAN.setup_run_state(args)" in source
@@ -161,13 +168,15 @@ def test_v35_authority_wrapper_uses_stable_runtime_scope_reset_setup_and_lineage
     assert "authority_action_recording_layer(_V27._AUTHORITY_ACTION_LEDGER)" in source
     assert '_AUTHORITY_RUN_RESET_PLAN.reset_named("v26-gap-commitment")' in source
     assert '_AUTHORITY_RUN_RESET_PLAN.reset_named("v25-live-objective")' in source
+    assert "_V23_BOOTSTRAP_SETUP_PLAN.setup_run_state(args)" in source
     assert source.count("_AUTHORITY_RUNTIME_SCOPE.controller_layer(") == 2
-    assert "return _BASE_V23_AUTHORITY(args)" in source
+    assert "return _V17.authority_main(args)" in source
+    assert "return v23.authority_main(args)" not in source
     assert "return v26._BASE_V25_AUTHORITY(args)" not in source
     assert "return v26.authority_main(args)" not in source
     assert "return _V27.authority_main(args)" not in source
     assert "return _V28.authority_main(args)" not in source
-    assert v35._BASE_V23_AUTHORITY is v35._V24._BASE_AUTHORITY_MAIN
+    assert v35._V17 is v35.v23.v17
     assert "_LIVE_AUTHORITY_CORE = None" in source
     assert "base.set_nes_controller_state = capture_authority_core" not in source
     assert "base.set_nes_controller_state = original_set_controller" not in source
