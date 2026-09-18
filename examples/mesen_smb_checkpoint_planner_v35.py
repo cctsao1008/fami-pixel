@@ -24,10 +24,12 @@ handoff, or action-lineage guess is involved. V26 SURVIVE/gap/landing guards
 remain above this lower COLLECT delegate, and V34's asynchronous worker/search
 machinery stays available for non-Star/fallback operation while objective routing,
 PROGRESS fallback, async COLLECT authority scan, controller instrumentation,
-V34/V33/V32/V29/V28/V27/V26 run-start resets, V30 proof-horizon setup, V28
+V34/V33/V32/V29/V28/V27/V26/V25 run-start resets, V30 proof-horizon setup, V28
 checkpoint request enrichment, and V27 authority-action lineage recording are now
-bound through stable control composition. V26's SURVIVE policy remains active in
-its selector even though the historical V26 authority wrapper is bypassed.
+bound through stable control composition. Historical V26/V25/V24 authority shells
+are bypassed; their run-scoped reset/log responsibilities are reproduced here
+before entering V24's captured V23 authority loop. V26's SURVIVE policy remains
+active in its selector.
 """
 
 from __future__ import annotations
@@ -71,6 +73,8 @@ _V30 = _V32.v31.v30
 _V29 = _V30.v29
 _V28 = _V29.v28
 _V27 = _V28.v27
+_V24 = v25.v24
+_BASE_V23_AUTHORITY = _V24._BASE_AUTHORITY_MAIN
 
 
 def _proof_horizon_for_freshness(freshness: int) -> int:
@@ -113,6 +117,10 @@ def _reset_v27_authority_action_ledger() -> None:
 
 def _reset_v26_gap_commitment() -> None:
     v26._reset_gap_commitment()
+
+
+def _reset_v25_live_objective() -> None:
+    v25._LIVE_OBJECTIVE.clear()
 
 
 def _setup_v30_collect_runtime(args) -> int:
@@ -180,6 +188,7 @@ _AUTHORITY_RUN_RESET_PLAN = AuthorityRunResetPlan(
         NamedRunReset("v27-progress-response-cache", _reset_v27_progress_response_cache),
         NamedRunReset("v27-authority-action-ledger", _reset_v27_authority_action_ledger),
         NamedRunReset("v26-gap-commitment", _reset_v26_gap_commitment),
+        NamedRunReset("v25-live-objective", _reset_v25_live_objective),
     )
 )
 _AUTHORITY_RUN_SETUP_PLAN = AuthorityRunSetupPlan(
@@ -420,8 +429,9 @@ def authority_main(args) -> int:
             # prefix, V30 installs the proof horizon, V29 performs the second
             # cache clear, V28 clears current-plan memory and installs request
             # enrichment, V27 clears PROGRESS/lineage state and installs the
-            # authority-action recorder, then V26 clears its run-scoped gap
-            # commitment before entering the captured V25 authority loop.
+            # authority-action recorder, V26 clears its run-scoped gap commitment,
+            # and V25 clears its sticky live objective before the historical V24
+            # log and captured V23 authority loop.
             _AUTHORITY_RUN_RESET_PLAN.reset_through("v32-collect-response-cache")
             v11._log(
                 "Planner V34: eager COLLECT handoffs enabled | "
@@ -467,7 +477,17 @@ def authority_main(args) -> int:
                         f"gap<={v26.v15.RADAR_GAP_TRIGGER_PX}px grounded/airborne single-root rearm+15f hold; "
                         "landing corridor enemy preemption restored"
                     )
-                    return v26._BASE_V25_AUTHORITY(args)
+                    _AUTHORITY_RUN_RESET_PLAN.reset_named("v25-live-objective")
+                    v11._log(
+                        "Planner V25: sticky COLLECT objective enabled | "
+                        f"reward-prefix={v25._REWARD_PREFIX_FRAMES}f vocab={len(v25.REWARD_BEAM_CHUNKS_WITH_HOLD)} "
+                        "exact Mesen prefix safety + native collection proof"
+                    )
+                    v11._log(
+                        "Planner V24: latency-tolerant forward model enabled | "
+                        f"prefix={v23.EXECUTION_PREFIX_FRAMES}f partial-safe selection + tail continuation"
+                    )
+                    return _BASE_V23_AUTHORITY(args)
     finally:
         _LIVE_AUTHORITY_CORE = None
 
