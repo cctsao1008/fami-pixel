@@ -88,30 +88,30 @@ def test_current_authority_reset_plan_executes_concrete_dependencies_in_order(mo
     ]
 
 
-def test_v35_owns_outer_reset_prefix_through_v32_and_enters_at_v29_after_setup():
+def test_v35_owns_v29_reset_after_v30_setup_and_enters_at_v28():
     v35 = _load_v35()
     source = inspect.getsource(v35.authority_main)
 
-    assert '_AUTHORITY_RUN_RESET_PLAN.reset_through("v32-collect-response-cache")' in source
-    assert "_AUTHORITY_RUN_SETUP_PLAN.setup_run_state(args)" in source
-    assert "return _V29.authority_main(args)" in source
-    assert "return _V30.authority_main(args)" not in source
-    assert "return _V32.authority_main(args)" not in source
-    assert "return v34.authority_main(args)" not in source
+    prefix = '_AUTHORITY_RUN_RESET_PLAN.reset_through("v32-collect-response-cache")'
+    setup = "_AUTHORITY_RUN_SETUP_PLAN.setup_run_state(args)"
+    v29_reset = '_AUTHORITY_RUN_RESET_PLAN.reset_named("v29-collect-response-cache")'
+    delegate = "return _V28.authority_main(args)"
 
-    # Historical example runners retain standalone behavior; current V35 simply
-    # no longer enters through V34/V33/V32/V30.
-    assert "_install_handoff_cache().clear()" in inspect.getsource(v35.v34.authority_main)
-    assert "_install_deadline_cache().clear()" in inspect.getsource(v35._V33.authority_main)
+    assert prefix in source
+    assert setup in source
+    assert v29_reset in source
+    assert delegate in source
+    assert source.index(prefix) < source.index(setup) < source.index(v29_reset) < source.index(delegate)
+    assert "return _V29.authority_main(args)" not in source
+    assert "return _V30.authority_main(args)" not in source
+
+    # Historical examples retain standalone behavior for provenance.
     assert "v29._COLLECT_RESPONSE_CACHE.clear()" in inspect.getsource(v35._V32.authority_main)
     assert "v28.COLLECT_PROOF_HORIZON = int(proof_horizon)" in inspect.getsource(v35._V30.authority_main)
-
-    # Do not deduplicate the historical V32/V29 reset pair during extraction.
-    # V35 owns the former V32 call; V29 still owns the second call deeper down.
     assert "_COLLECT_RESPONSE_CACHE.clear()" in inspect.getsource(v35._V29.authority_main)
 
 
-def test_v35_outer_reset_transfer_runs_before_setup_and_v29_delegate(
+def test_v35_preserves_v32_setup_v29_runtime_order_while_bypassing_v29(
     monkeypatch,
     tmp_path,
 ):
@@ -130,29 +130,28 @@ def test_v35_outer_reset_transfer_runs_before_setup_and_v29_delegate(
     monkeypatch.setattr(v35._V33, "_install_deadline_cache", lambda: Clearable("deadline"))
     monkeypatch.setattr(v35._V29, "_COLLECT_RESPONSE_CACHE", collect)
     monkeypatch.setattr(v35.v11, "_log", lambda *_args, **_kwargs: None)
-
-    def forbidden(_args):
-        raise AssertionError("bypassed historical wrapper was invoked")
-
-    monkeypatch.setattr(v35.v34, "authority_main", forbidden)
-    monkeypatch.setattr(v35._V33, "authority_main", forbidden)
-    monkeypatch.setattr(v35._V32, "authority_main", forbidden)
-    monkeypatch.setattr(v35._V30, "authority_main", forbidden)
     monkeypatch.setattr(
         v35,
         "_AUTHORITY_RUN_SETUP_PLAN",
         SimpleNamespace(setup_run_state=lambda _args: calls.append("v30-setup")),
     )
 
+    def forbidden(_args):
+        raise AssertionError("bypassed historical wrapper was invoked")
+
+    monkeypatch.setattr(v35._V32, "authority_main", forbidden)
+    monkeypatch.setattr(v35._V30, "authority_main", forbidden)
+    monkeypatch.setattr(v35._V29, "authority_main", forbidden)
+
     def delegated(_args):
-        calls.append("v29")
+        calls.append("v28")
         return 23
 
-    monkeypatch.setattr(v35._V29, "authority_main", delegated)
+    monkeypatch.setattr(v35._V28, "authority_main", delegated)
 
     args = SimpleNamespace(
         step_timeout=1.0,
         checkpoint_dir=tmp_path / "checkpoints" / "live.mss",
     )
     assert v35.authority_main(args) == 23
-    assert calls == ["handoff", "deadline", "collect", "v30-setup", "v29"]
+    assert calls == ["handoff", "deadline", "collect", "v30-setup", "collect", "v28"]
