@@ -75,6 +75,33 @@ def test_authority_run_reset_plan_validates_prefix_target_before_side_effects():
     assert calls == []
 
 
+def test_authority_run_reset_plan_can_execute_one_named_step_without_replaying_prefix():
+    calls = []
+    plan = AuthorityRunResetPlan(
+        steps=(
+            NamedRunReset("v32", lambda: calls.append("v32")),
+            NamedRunReset("v29", lambda: calls.append("v29")),
+            NamedRunReset("v28", lambda: calls.append("v28")),
+        )
+    )
+
+    plan.reset_named("v29")
+
+    assert calls == ["v29"]
+
+
+def test_authority_run_reset_plan_validates_named_target_before_side_effects():
+    calls = []
+    plan = AuthorityRunResetPlan(
+        steps=(NamedRunReset("known", lambda: calls.append("known")),)
+    )
+
+    with pytest.raises(KeyError, match="unknown"):
+        plan.reset_named("missing")
+
+    assert calls == []
+
+
 def test_authority_run_reset_plan_rejects_duplicate_step_names():
     reset = lambda: None
     with pytest.raises(ValueError, match="unique"):
