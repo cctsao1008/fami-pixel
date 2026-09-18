@@ -40,13 +40,16 @@ def test_current_v35_extracts_v26_runtime_but_preserves_v26_survive_policy_owner
     source = inspect.getsource(v35.authority_main)
 
     reset = '_AUTHORITY_RUN_RESET_PLAN.reset_named("v26-gap-commitment")'
-    delegate = "return v26._BASE_V25_AUTHORITY(args)"
+    v25_reset = '_AUTHORITY_RUN_RESET_PLAN.reset_named("v25-live-objective")'
+    delegate = "return _BASE_V23_AUTHORITY(args)"
 
     assert reset in source
+    assert v25_reset in source
     assert '"Planner V26: current scene SURVIVE guards enabled | "' in source
     assert delegate in source
-    assert source.index(reset) < source.index(delegate)
+    assert source.index(reset) < source.index(v25_reset) < source.index(delegate)
     assert "return v26.authority_main(args)" not in source
+    assert "return v26._BASE_V25_AUTHORITY(args)" not in source
     assert v35.v26._BASE_V25_AUTHORITY is v35.v25.authority_main
 
     # Authority-wrapper extraction must not move the planner policy itself.
@@ -56,7 +59,7 @@ def test_current_v35_extracts_v26_runtime_but_preserves_v26_survive_policy_owner
     assert v35.v26._LOWER_PLAN_DELEGATE.selector is v35._best_collect_or_progress
 
 
-def test_v35_v26_gap_reset_runs_inside_lineage_scope_before_captured_v25(monkeypatch, tmp_path):
+def test_v35_v26_gap_reset_still_precedes_v25_reset_and_captured_v23(monkeypatch, tmp_path):
     v35 = _load_v35()
     calls = []
 
@@ -82,14 +85,14 @@ def test_v35_v26_gap_reset_runs_inside_lineage_scope_before_captured_v25(monkeyp
     monkeypatch.setattr(v35.v26, "authority_main", forbidden)
 
     def delegated(_args):
-        calls.append("v25")
-        return 25
+        calls.append("v23")
+        return 23
 
-    monkeypatch.setattr(v35.v26, "_BASE_V25_AUTHORITY", delegated)
+    monkeypatch.setattr(v35, "_BASE_V23_AUTHORITY", delegated)
 
     args = SimpleNamespace(
         step_timeout=1.0,
         checkpoint_dir=tmp_path / "checkpoints" / "live.mss",
     )
-    assert v35.authority_main(args) == 25
-    assert calls[-2:] == ["v26-gap-commitment", "v25"]
+    assert v35.authority_main(args) == 23
+    assert calls[-3:] == ["v26-gap-commitment", "v25-live-objective", "v23"]
