@@ -43,10 +43,11 @@ def test_current_authority_runtime_delegation_chain_is_exact():
     v35 = _load_v35()
     v34, v33, v32, v30, v29, v28, v27, v26, v25, v24 = _authority_modules(v35)
 
-    # Current V35 now owns the historical V34..V24 authority-shell runtime
-    # responsibilities and enters the captured V23 authority loop directly.
-    assert "return _BASE_V23_AUTHORITY(args)" in inspect.getsource(v35.authority_main)
-    assert v35._BASE_V23_AUTHORITY is v24._BASE_AUTHORITY_MAIN
+    # Current V35 owns the historical V34..V23 runtime/bootstrap responsibilities
+    # and enters V17's actual live authority loop directly.
+    assert "return _V17.authority_main(args)" in inspect.getsource(v35.authority_main)
+    assert v35._V17 is v35.v23.v17
+    assert v24._BASE_AUTHORITY_MAIN is v35.v23.authority_main
 
     # Historical examples remain independently runnable with their original
     # standalone delegation/setup/reset ownership.
@@ -60,6 +61,7 @@ def test_current_authority_runtime_delegation_chain_is_exact():
     assert "return _BASE_V25_AUTHORITY(args)" in inspect.getsource(v26.authority_main)
     assert "return _BASE_V24_AUTHORITY(args)" in inspect.getsource(v25.authority_main)
     assert "return _BASE_AUTHORITY_MAIN(args)" in inspect.getsource(v24.authority_main)
+    assert "return v17.authority_main(args)" in inspect.getsource(v35.v23.authority_main)
 
     assert v26._BASE_V25_AUTHORITY is v25.authority_main
     assert v25._BASE_V24_AUTHORITY is v24.authority_main
@@ -81,12 +83,15 @@ def test_authority_wrappers_preserve_their_current_stateful_responsibilities():
     assert "authority_action_recording_layer(_V27._AUTHORITY_ACTION_LEDGER)" in v35_source
     assert '_AUTHORITY_RUN_RESET_PLAN.reset_named("v26-gap-commitment")' in v35_source
     assert '_AUTHORITY_RUN_RESET_PLAN.reset_named("v25-live-objective")' in v35_source
-    assert "return _BASE_V23_AUTHORITY(args)" in v35_source
+    assert "_V23_BOOTSTRAP_SETUP_PLAN.setup_run_state(args)" in v35_source
+    assert "return _V17.authority_main(args)" in v35_source
+    assert "return v23.authority_main(args)" not in v35_source
     assert "return v26._BASE_V25_AUTHORITY(args)" not in v35_source
     assert "return v26.authority_main(args)" not in v35_source
     assert "return _V27.authority_main(args)" not in v35_source
     assert type(v35._AUTHORITY_RUNTIME_SCOPE).__module__ == "fami_pixel.control.authority_runtime"
     assert type(v35._AUTHORITY_RUN_SETUP_PLAN).__module__ == "fami_pixel.control.authority_runtime"
+    assert type(v35._V23_BOOTSTRAP_SETUP_PLAN).__module__ == "fami_pixel.control.authority_runtime"
 
     # Historical standalone wrappers keep provenance behavior.
     assert "_install_handoff_cache().clear()" in inspect.getsource(v34.authority_main)
@@ -102,6 +107,12 @@ def test_authority_wrappers_preserve_their_current_stateful_responsibilities():
     assert v35._AUTHORITY_RUN_RESET_PLAN.names[-2:] == (
         "v26-gap-commitment",
         "v25-live-objective",
+    )
+    assert v35._V23_BOOTSTRAP_SETUP_PLAN.names == (
+        "v23-process-job",
+        "v23-surrogate-model",
+        "v23-runtime-dir",
+        "v23-live-stack",
     )
 
     v28_source = inspect.getsource(v28.authority_main)
@@ -133,10 +144,10 @@ def test_authority_extraction_boundary_is_runtime_orchestration_not_policy_rewri
     v34, _v33, _v32, _v30, _v29, _v28, v27, v26, _v25, _v24 = _authority_modules(v35)
 
     assert "_COLLECT_PROGRESS_CONTROL.decide(" in inspect.getsource(v35._best_collect_or_progress)
-    assert "return _BASE_V23_AUTHORITY(args)" in inspect.getsource(v35.authority_main)
+    assert "return _V17.authority_main(args)" in inspect.getsource(v35.authority_main)
 
     # Current controller invocation order remains lineage recorder -> live-core
-    # capture -> base even though V27..V24 authority wrappers are bypassed.
+    # capture -> base even though V27..V23 authority wrappers are bypassed.
     source = inspect.getsource(v35.authority_main)
     assert "capture_authority_core" in source
     assert "controller_layer(capture_layer)" in source
