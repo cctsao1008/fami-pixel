@@ -48,7 +48,7 @@ def test_sync_star_search_is_root_exact_and_restores_after_every_branch(monkeypa
 
     save_calls = []
     restore_calls = []
-    ledger = v35._EAGER_COLLECT_CONTROL.ledger
+    ledger = v35._COLLECT_PROGRESS_CONTROL.eager_collect.ledger
     ledger.clear()
     ledger.record(99, 0x82)
 
@@ -134,7 +134,7 @@ def test_sync_star_root_mismatch_never_rebases(monkeypatch, tmp_path):
     assert v35.v23._latest_forward_meta["forward_model_source_age_frames"] == 4
 
 
-def test_star_uses_sync_path_before_async_composed_control(monkeypatch):
+def test_star_uses_sync_path_before_composed_lower_objective_control(monkeypatch):
     v35 = _load_v35()
     sentinel = {"candidate": "collect_hold_right_jump4", "root_frame": 200}
     v35._LIVE_AUTHORITY_CORE = object()
@@ -142,12 +142,15 @@ def test_star_uses_sync_path_before_async_composed_control(monkeypatch):
     monkeypatch.setattr(v35, "_sync_star_plan", lambda *args, **kwargs: dict(sentinel))
 
     class FailControl:
-        ledger = v35._EAGER_COLLECT_CONTROL.ledger
+        eager_collect = v35._EAGER_COLLECT_CONTROL
+
+        def target_type(self, _live_radar):
+            return "star"
 
         def decide(self, *args, **kwargs):
-            raise AssertionError("async COLLECT control must not run after current-root Star proof succeeds")
+            raise AssertionError("lower objective fallback must not run after current-root Star proof succeeds")
 
-    monkeypatch.setattr(v35, "_EAGER_COLLECT_CONTROL", FailControl())
+    monkeypatch.setattr(v35, "_COLLECT_PROGRESS_CONTROL", FailControl())
 
     plan = v35._best_collect_or_progress(
         [],
@@ -159,31 +162,37 @@ def test_star_uses_sync_path_before_async_composed_control(monkeypatch):
     assert plan == sentinel
 
 
-def test_non_star_uses_stable_async_composed_control(monkeypatch):
+def test_non_star_uses_stable_collect_progress_control(monkeypatch):
     v35 = _load_v35()
     sentinel = {"candidate": "async-mushroom"}
     meta = {"forward_model_status": "selected-eager-handoff-collect-proof"}
     seen = {}
 
     class FakeControl:
-        ledger = v35._EAGER_COLLECT_CONTROL.ledger
+        eager_collect = v35._EAGER_COLLECT_CONTROL
+
+        def target_type(self, live_radar):
+            seen["target_radar"] = live_radar
+            return "mushroom"
 
         def decide(self, response_paths, **kwargs):
             seen["response_paths"] = response_paths
             seen.update(kwargs)
-            return SimpleNamespace(plan=dict(sentinel), meta=dict(meta))
+            return SimpleNamespace(plan=dict(sentinel), meta=dict(meta), target_type="mushroom")
 
-    monkeypatch.setattr(v35, "_EAGER_COLLECT_CONTROL", FakeControl())
+    monkeypatch.setattr(v35, "_COLLECT_PROGRESS_CONTROL", FakeControl())
 
+    radar = {"collect_target_type": "mushroom"}
     plan = v35._best_collect_or_progress(
         [Path("worker-0.json")],
         300,
         16,
         -1,
-        {"collect_target_type": "mushroom"},
+        radar,
     )
 
     assert plan == sentinel
+    assert seen["target_radar"] is radar
     assert seen["response_paths"] == [Path("worker-0.json")]
     assert seen["current_frame"] == 300
     assert seen["freshness"] == 16
