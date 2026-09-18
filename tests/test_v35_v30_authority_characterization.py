@@ -64,15 +64,49 @@ def test_v30_proof_horizon_is_installed_before_v29_authority_delegate(monkeypatc
     assert calls[1] == ("delegate", 37)
 
 
-def test_current_v35_enters_v30_because_v30_still_has_required_runtime_setup():
+def test_current_v35_extracts_v30_setup_and_enters_v29_directly():
     v35 = _load_v35()
-    v35_source = inspect.getsource(v35.authority_main)
-    v30_source = inspect.getsource(v35._V30.authority_main)
+    source = inspect.getsource(v35.authority_main)
 
-    assert "return _V30.authority_main(args)" in v35_source
-    assert "v28.COLLECT_PROOF_HORIZON = int(proof_horizon)" in v30_source
+    assert type(v35._AUTHORITY_RUN_SETUP_PLAN).__module__ == "fami_pixel.control.authority_runtime"
+    assert v35._AUTHORITY_RUN_SETUP_PLAN.names == ("v30-collect-proof-horizon",)
+    assert "_AUTHORITY_RUN_SETUP_PLAN.setup_run_state(args)" in source
+    assert "return _V29.authority_main(args)" in source
+    assert "return _V30.authority_main(args)" not in source
 
-    # Bypassing V30 before extracting this setup would leave authority-side
-    # request projection / retention using whatever historical horizon happened
-    # to be present in the process, so this wrapper is not reset/log-only.
-    assert "return _V29.authority_main(args)" not in v35_source
+    # Historical V30 remains independently runnable with its original setup and
+    # delegation behavior even though current V35 no longer enters through it.
+    historical = inspect.getsource(v35._V30.authority_main)
+    assert "v28.COLLECT_PROOF_HORIZON = int(proof_horizon)" in historical
+    assert "return v29.authority_main(args)" in historical
+
+
+def test_v35_stable_v30_setup_installs_horizon_before_v29_delegate(monkeypatch, tmp_path):
+    v35 = _load_v35()
+    calls = []
+
+    monkeypatch.setattr(v35._V30, "_proof_horizon", lambda _args: 41)
+    monkeypatch.setattr(v35.v11, "_log", lambda message: calls.append(("log", message)))
+    monkeypatch.setattr(
+        v35,
+        "_AUTHORITY_RUN_RESET_PLAN",
+        SimpleNamespace(reset_through=lambda _name: None),
+    )
+
+    def delegated(_args):
+        calls.append(("delegate", int(v35._V28.COLLECT_PROOF_HORIZON)))
+        return 29
+
+    monkeypatch.setattr(v35._V29, "authority_main", delegated)
+
+    args = SimpleNamespace(
+        step_timeout=1.0,
+        checkpoint_dir=tmp_path / "checkpoints" / "live.mss",
+        plan_freshness=16,
+    )
+    assert v35.authority_main(args) == 29
+    assert int(v35._V28.COLLECT_PROOF_HORIZON) == 41
+    v30_logs = [message for kind, message in calls if kind == "log" and "Planner V30:" in message]
+    assert len(v30_logs) == 1
+    assert "proof-horizon=41f" in v30_logs[0]
+    assert calls[-1] == ("delegate", 41)
