@@ -1,3 +1,4 @@
+import inspect
 import json
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
@@ -82,6 +83,13 @@ def test_v34_declares_four_frame_eager_handoff():
     assert v34.PLANNER_NAME == "v34-eager-handoff-collect"
     assert tuple(v34.COLLECT_HANDOFF_FRAMES) == (4, 8, 12)
     assert tuple(v34.v28.COLLECT_HANDOFF_FRAMES) == (4, 8, 12)
+
+
+def test_v34_current_selector_uses_stable_response_intake():
+    v34 = _load_v34()
+    source = inspect.getsource(v34._best_collect_or_progress)
+    assert "read_available_responses(response_paths, reader=v11._read_json)" in source
+    assert "for path in response_paths:" not in source
 
 
 def test_v34_earliest_ready_stage_beats_later_better_reward_geometry(tmp_path):
