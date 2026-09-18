@@ -75,7 +75,7 @@ def test_v35_installer_preserves_v28_authority_plan_wrapper_over_v26_survive_own
 
     # V28 intentionally remains the V23-facing wrapper because it remembers the
     # schedule actually selected by V26 for future exact COLLECT continuation
-    # handoffs.  The mutable memory itself now lives behind the stable control
+    # handoffs. The mutable memory itself now lives behind the stable control
     # package boundary rather than as a raw V28 module-level plan dictionary.
     assert v35.v23._best_forward_plan is v28._best_v28_plan
     assert v28._BASE_V26_PLAN is v35.v26._best_v26_plan
@@ -85,7 +85,7 @@ def test_v35_installer_preserves_v28_authority_plan_wrapper_over_v26_survive_own
     assert type(v28._AUTHORITY_PLAN_MEMORY).__module__ == "fami_pixel.control.authority_plan"
 
     # The lower COLLECT/PROGRESS dependency is the part migrated to the stable
-    # explicit seam.  SURVIVE/gap/landing still execute inside V26 before this
+    # explicit seam. SURVIVE/gap/landing still execute inside V26 before this
     # delegate can be reached.
     assert v35.v26._LOWER_PLAN_DELEGATE.selector is v35._best_collect_or_progress
     assert v35.v26._lower_plan_delegate_explicit is True
@@ -149,15 +149,19 @@ def test_v35_sync_speculation_uses_composed_authority_ledger():
     assert "v34.v27._AUTHORITY_ACTION_LEDGER" not in source
 
 
-def test_v35_authority_wrapper_uses_stable_runtime_scope_and_outer_reset_prefix():
+def test_v35_authority_wrapper_uses_stable_runtime_scope_reset_and_setup_plans():
     v35 = _load_v35()
     source = inspect.getsource(v35.authority_main)
 
     assert type(v35._AUTHORITY_RUNTIME_SCOPE).__module__ == "fami_pixel.control.authority_runtime"
     assert type(v35._AUTHORITY_RUN_RESET_PLAN).__module__ == "fami_pixel.control.authority_runtime"
+    assert type(v35._AUTHORITY_RUN_SETUP_PLAN).__module__ == "fami_pixel.control.authority_runtime"
+    assert v35._AUTHORITY_RUN_SETUP_PLAN.names == ("v30-collect-proof-horizon",)
     assert "with _AUTHORITY_RUNTIME_SCOPE.controller_layer(capture_layer):" in source
     assert '_AUTHORITY_RUN_RESET_PLAN.reset_through("v32-collect-response-cache")' in source
-    assert "return _V30.authority_main(args)" in source
+    assert "_AUTHORITY_RUN_SETUP_PLAN.setup_run_state(args)" in source
+    assert "return _V29.authority_main(args)" in source
+    assert "return _V30.authority_main(args)" not in source
     assert "return _V32.authority_main(args)" not in source
     assert "return v34.authority_main(args)" not in source
     assert "_LIVE_AUTHORITY_CORE = None" in source
