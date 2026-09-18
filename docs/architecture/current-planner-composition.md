@@ -61,7 +61,7 @@ current SURVIVE commitment
 
 V26 owns the current-scene SURVIVE / gap / landing-preemption policy. Later versions replace only the lower COLLECT/PROGRESS delegate rather than bypassing V26.
 
-One characterization nuance matters during extraction: the function currently installed in `v23._best_forward_plan` is V28's `_best_v28_plan`, not V26 directly. V28 is a transparent authority-plan memory wrapper: it calls the captured V26 selector first, then remembers the schedule V26 actually selected so later COLLECT workers can build exact continuation handoffs. Therefore the effective control path is:
+One characterization nuance matters during extraction: the function currently installed in `v23._best_forward_plan` is V28's `_best_v28_plan`, not V26 directly. V28 is a transparent authority-plan memory wrapper: it calls the captured V26 selector first, then records the schedule V26 actually selected so later COLLECT workers can build exact continuation handoffs. Therefore the effective control path is:
 
 ```text
 v23._best_forward_plan
@@ -70,7 +70,7 @@ v23._best_forward_plan
           -> stable lower COLLECT/PROGRESS delegate seam
 ```
 
-The V28 wrapper is bookkeeping around the V26 decision, not a competing safety policy owner. Removing or bypassing it before its continuation-memory responsibility is extracted would change non-Star COLLECT behavior.
+The wrapper is bookkeeping around the V26 decision, not a competing safety policy owner. Its mutable continuation state has now been extracted into stable `control/`; the V28 wrapper still remains as a transitional call site until the V23-facing selector itself is moved.
 
 ### SURVIVE / landing preemption
 
@@ -161,11 +161,15 @@ src/fami_pixel/runtime/                 process/checkpoint lifecycle
 src/fami_pixel/telemetry/               evidence/UI support
 ```
 
-The first #35 structural slice now also introduces:
+Issue #35 has now introduced these stable composition/control seams:
 
 ```text
 src/fami_pixel/planning/contracts.py    stable PlanSelector callable contract
 src/fami_pixel/control/delegates.py     explicit process-local PlanDelegateSlot
+src/fami_pixel/control/authority_plan.py
+                                        exact selected-plan memory + phase projection
+src/fami_pixel/control/request_enrichment.py
+                                        bounded checkpoint-request annotation seam
 ```
 
 V35 no longer performs its final lower-objective composition by assigning directly to `v26._BASE_V25_PLAN`. Instead it calls:
@@ -178,7 +182,15 @@ V26 keeps SURVIVE / landing preemption as the owner above that seam, and dispatc
 
 For migration compatibility, historical V28-V34 source still assigns `v26._BASE_V25_PLAN`. V26 resets into that legacy mode when a historical stack is installed, so those runners remain usable while they are migrated incrementally. The **current V35 composition** ends in the explicit stable delegate path; the historical compatibility global is not its final lower-plan authority.
 
-The V23-facing V28 `_best_v28_plan` wrapper intentionally remains in place for now because it records the schedule returned by V26 into `_LATEST_AUTHORITY_PLAN`. That state feeds V28/V34 continuation-based COLLECT handoffs. This wrapper is therefore a separate extraction responsibility from the lower-plan delegate seam.
+V28 no longer owns raw `_LATEST_AUTHORITY_PLAN` mutable state. It stores the exact schedule selected by V26 in `AuthorityPlanMemory`, which preserves root/candidate/schedule and projects the real remaining phase for delayed COLLECT warm starts.
+
+Checkpoint request annotation is also no longer implemented by replacing `v11._atomic_json`. The V17 authority loop now publishes each checkpoint payload through:
+
+```python
+enrich_checkpoint_request(payload)
+```
+
+and V28 installs an `AuthorityContinuationRequestEnricher` only for the bounded authority scope in which V27/V17 run. The serializer remains the serializer; control-plane continuation metadata is added before IPC publication through a stable `control/` seam.
 
 ## Mutation map still to remove from the active architecture
 
@@ -187,7 +199,7 @@ Characterization must preserve the effects of these remaining mutations before r
 ```text
 v23.authority_main
 v23.PLANNER_NAME
-v23._best_forward_plan (currently the V28 authority-plan memory wrapper)
+v23._best_forward_plan (currently the V28 wrapper over stable authority memory)
 v23.shadow_worker_main / forward-search delegates
 v28 worker-side COLLECT search entry
 v25 PROGRESS baseline payload
@@ -223,13 +235,14 @@ Game-specific state decoding and Mesen trajectory mechanics remain under the exi
 Do not rewrite the stack in one step. Use this order:
 
 1. **Characterize V35 composition** — complete: this document plus source-level tests freeze the installer/delegation graph.
-2. **Introduce stable `planning/` and `control/` boundaries** — started: `PlanSelector` and `PlanDelegateSlot` now own the first explicit composition seam.
+2. **Introduce stable `planning/` and `control/` boundaries** — complete for the first seams: `PlanSelector`, `PlanDelegateSlot`, authority-plan memory, and request enrichment are stable package code.
 3. Extract pure admission/lineage/cohort/objective helpers first; keep historical wrappers calling the stable functions.
 4. Continue extracting lower COLLECT/PROGRESS arbitration and migrate V28-V34 off the legacy compatibility assignment.
-5. Extract V28 authority-plan continuation memory and the live authority-loop/worker-response orchestration into `control/` without bypassing its current behavior.
-6. Create one explicit stable SMB1 composition root.
-7. Point a thin current runner at that stable root.
-8. Retain V1-V35 examples as research provenance/regression references rather than active architecture owners.
+5. **Extract V28 authority continuation state/request publication concerns** — in progress: memory and request annotation are now stable; the V23-facing wrapper and historical authority/worker chain remain.
+6. Extract worker-response intake and remaining authority-loop composition into `control/`.
+7. Create one explicit stable SMB1 composition root.
+8. Point a thin current runner at that stable root.
+9. Retain V1-V35 examples as research provenance/regression references rather than active architecture owners.
 
 At every slice, existing deterministic gates remain authoritative: Star 4f replay, strict multi-Goomba landing, pit/terrain validity, action-lineage/proof-lease tests, and process-lifecycle tests.
 
@@ -238,7 +251,8 @@ At every slice, existing deterministic gates remain authoritative: Star 4f repla
 Structural extraction is equivalent only if all of the following remain true:
 
 - SURVIVE/landing preemption remains above COLLECT and PROGRESS;
-- the V28 authority-plan continuation memory remains behaviorally equivalent until it is explicitly extracted;
+- authority-plan continuation preserves the exact selected schedule/root/phase;
+- checkpoint request enrichment does not mutate generic IPC serialization semantics;
 - Star current-root synchronous exact-Mesen behavior remains current-root and 4-frame receding;
 - non-Star COLLECT retains current handoff/cohort/deadline semantics;
 - PROGRESS retains bounded multi-chunk search and exact-Mesen final authority;
