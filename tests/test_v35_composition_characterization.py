@@ -75,13 +75,14 @@ def test_v35_installer_preserves_v28_authority_plan_wrapper_over_v26_survive_own
 
     # V28 intentionally remains the V23-facing wrapper because it remembers the
     # schedule actually selected by V26 for future exact COLLECT continuation
-    # handoffs.  That wrapper must still delegate policy to V26 rather than
-    # becoming a separate safety owner.
+    # handoffs.  The mutable memory itself now lives behind the stable control
+    # package boundary rather than as a raw V28 module-level plan dictionary.
     assert v35.v23._best_forward_plan is v28._best_v28_plan
     assert v28._BASE_V26_PLAN is v35.v26._best_v26_plan
     wrapper_source = inspect.getsource(v28._best_v28_plan)
     assert "result = _BASE_V26_PLAN(" in wrapper_source
     assert "_remember_authority_plan(result)" in wrapper_source
+    assert type(v28._AUTHORITY_PLAN_MEMORY).__module__ == "fami_pixel.control.authority_plan"
 
     # The lower COLLECT/PROGRESS dependency is the part migrated to the stable
     # explicit seam.  SURVIVE/gap/landing still execute inside V26 before this
