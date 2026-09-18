@@ -1,5 +1,6 @@
 """Stable live-control composition helpers."""
 
+from .authority import LiveAuthorityControl
 from .authority_plan import AuthorityPlanMemory
 from .authority_runtime import (
     AuthorityRunResetPlan,
@@ -41,6 +42,7 @@ __all__ = [
     "CollectProgressDecision",
     "EagerCollectControl",
     "EagerCollectDecision",
+    "LiveAuthorityControl",
     "NamedRunReset",
     "NamedRunSetup",
     "PlanDelegateSlot",
