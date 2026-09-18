@@ -24,9 +24,10 @@ handoff, or action-lineage guess is involved. V26 SURVIVE/gap/landing guards
 remain above this lower COLLECT delegate, and V34's asynchronous worker/search
 machinery stays available for non-Star/fallback operation while objective routing,
 PROGRESS fallback, async COLLECT authority scan, controller instrumentation,
-V34/V33/V32/V29/V28/V27 run-start resets, V30 proof-horizon setup, V28 checkpoint
-request enrichment, and V27 authority-action lineage recording are now bound
-through stable control composition.
+V34/V33/V32/V29/V28/V27/V26 run-start resets, V30 proof-horizon setup, V28
+checkpoint request enrichment, and V27 authority-action lineage recording are now
+bound through stable control composition. V26's SURVIVE policy remains active in
+its selector even though the historical V26 authority wrapper is bypassed.
 """
 
 from __future__ import annotations
@@ -418,8 +419,9 @@ def authority_main(args) -> int:
             # ownership: V32's first COLLECT-cache clear happens in the stable
             # prefix, V30 installs the proof horizon, V29 performs the second
             # cache clear, V28 clears current-plan memory and installs request
-            # enrichment, then V27 clears PROGRESS/lineage state and installs the
-            # authority-action recorder before entering V26.
+            # enrichment, V27 clears PROGRESS/lineage state and installs the
+            # authority-action recorder, then V26 clears its run-scoped gap
+            # commitment before entering the captured V25 authority loop.
             _AUTHORITY_RUN_RESET_PLAN.reset_through("v32-collect-response-cache")
             v11._log(
                 "Planner V34: eager COLLECT handoffs enabled | "
@@ -459,7 +461,13 @@ def authority_main(args) -> int:
                 with _AUTHORITY_RUNTIME_SCOPE.controller_layer(
                     authority_action_recording_layer(_V27._AUTHORITY_ACTION_LEDGER)
                 ):
-                    return v26.authority_main(args)
+                    _AUTHORITY_RUN_RESET_PLAN.reset_named("v26-gap-commitment")
+                    v11._log(
+                        "Planner V26: current scene SURVIVE guards enabled | "
+                        f"gap<={v26.v15.RADAR_GAP_TRIGGER_PX}px grounded/airborne single-root rearm+15f hold; "
+                        "landing corridor enemy preemption restored"
+                    )
+                    return v26._BASE_V25_AUTHORITY(args)
     finally:
         _LIVE_AUTHORITY_CORE = None
 
