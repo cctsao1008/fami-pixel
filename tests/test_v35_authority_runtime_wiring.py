@@ -34,6 +34,14 @@ def _args(tmp_path):
     )
 
 
+class _Core:
+    def __init__(self, frame=42):
+        self.frame = int(frame)
+
+    def frame_count(self):
+        return self.frame
+
+
 def _disable_outer_runtime_side_effects(monkeypatch, v35):
     monkeypatch.setattr(
         v35,
@@ -50,7 +58,10 @@ def _disable_outer_runtime_side_effects(monkeypatch, v35):
     )
 
 
-def test_v35_authority_scope_captures_live_core_and_restores_predecessor(monkeypatch, tmp_path):
+def test_v35_authority_scope_captures_live_core_records_lineage_and_restores_predecessor(
+    monkeypatch,
+    tmp_path,
+):
     v35 = _load_v35()
     base_calls = []
     captured = {}
@@ -62,17 +73,19 @@ def test_v35_authority_scope_captures_live_core_and_restores_predecessor(monkeyp
     monkeypatch.setattr(v35.base, "set_nes_controller_state", base_setter)
     monkeypatch.setattr(v35.v11, "_log", lambda *_args, **_kwargs: None)
     _disable_outer_runtime_side_effects(monkeypatch, v35)
+    v35._V27._AUTHORITY_ACTION_LEDGER.clear()
 
     def delegated(_args):
         installed = v35.base.set_nes_controller_state
         assert installed is not base_setter
-        core = object()
+        core = _Core(42)
         captured["core"] = core
         assert installed(core, 0, 0x82) == "base-result"
         assert v35._LIVE_AUTHORITY_CORE is core
+        assert v35._V27._AUTHORITY_ACTION_LEDGER.buttons_between(42, 43) == (0x82,)
         return 17
 
-    monkeypatch.setattr(v35._V27, "authority_main", delegated)
+    monkeypatch.setattr(v35.v26, "authority_main", delegated)
 
     assert v35.authority_main(_args(tmp_path)) == 17
     assert base_calls == [(captured["core"], 0, 0x82)]
@@ -91,15 +104,17 @@ def test_v35_authority_scope_restores_controller_and_live_core_on_delegate_error
     monkeypatch.setattr(v35.base, "set_nes_controller_state", base_setter)
     monkeypatch.setattr(v35.v11, "_log", lambda *_args, **_kwargs: None)
     _disable_outer_runtime_side_effects(monkeypatch, v35)
+    v35._V27._AUTHORITY_ACTION_LEDGER.clear()
 
     def delegated(_args):
         installed = v35.base.set_nes_controller_state
-        core = object()
+        core = _Core(77)
         installed(core, 0, 0x80)
         assert v35._LIVE_AUTHORITY_CORE is core
+        assert v35._V27._AUTHORITY_ACTION_LEDGER.buttons_between(77, 78) == (0x80,)
         raise RuntimeError("delegated authority failed")
 
-    monkeypatch.setattr(v35._V27, "authority_main", delegated)
+    monkeypatch.setattr(v35.v26, "authority_main", delegated)
 
     with pytest.raises(RuntimeError, match="delegated authority failed"):
         v35.authority_main(_args(tmp_path))
