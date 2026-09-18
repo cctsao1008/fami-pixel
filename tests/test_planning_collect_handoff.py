@@ -18,16 +18,22 @@ def _proof(worker: int, handoff: int, *, anchor: bool = False) -> dict:
 
 def test_handoff_proofs_filter_stage_and_anchor_and_copy_payloads():
     source = _proof(0, 4)
+    inherited_worker = {"collect_handoff_frames": 4}
     cohort = [
         {"worker": 0, "branch_proofs": [source, _proof(0, 8), _proof(0, 4, anchor=True)]},
-        {"worker": 1, "branch_proofs": [{"collect_handoff_frames": 4}]},
+        {"worker": 1, "branch_proofs": [inherited_worker]},
         {"worker": 2, "branch_proofs": ["bad", None]},
     ]
     proofs, workers = collect_handoff_proofs(cohort, 4)
+    # Historical V34 semantics use the enclosing response worker as fallback for
+    # coverage accounting, but do not mutate/normalize the branch proof payload.
     assert workers == {0, 1}
-    assert [proof["worker"] for proof in proofs] == [0, 1]
+    assert proofs[0]["worker"] == 0
+    assert "worker" not in proofs[1]
     proofs[0]["candidate"] = "changed"
+    proofs[1]["mutated"] = True
     assert source["candidate"] == "w0-h4"
+    assert "mutated" not in inherited_worker
 
 
 def test_anchor_proofs_are_separate_from_reward_stages():
