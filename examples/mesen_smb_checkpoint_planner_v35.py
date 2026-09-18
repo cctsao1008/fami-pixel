@@ -33,9 +33,11 @@ from pathlib import Path
 import time
 
 from fami_pixel.control import (
+    AuthorityRunResetPlan,
     AuthorityRuntimeScope,
     CollectProgressControl,
     EagerCollectControl,
+    NamedRunReset,
 )
 
 import mesen_smb_checkpoint_planner as base
@@ -52,6 +54,16 @@ _LIVE_AUTHORITY_CORE = None
 _SYNC_STEP_TIMEOUT = 2.0
 _SYNC_CHECKPOINT = Path("build/checkpoints/v35-sync-star-current.mss")
 
+# Freeze the concrete historical authority ancestry once at the current
+# composition root.  The reset plan below mirrors the exact descent order,
+# including the duplicate V32/V29 clear of the same COLLECT response cache.
+_V33 = v34.v33
+_V32 = _V33.v32
+_V30 = _V32.v31.v30
+_V29 = _V30.v29
+_V28 = _V29.v28
+_V27 = _V28.v27
+
 
 def _proof_horizon_for_freshness(freshness: int) -> int:
     """Compatibility adapter for the historical proof-horizon implementation."""
@@ -61,6 +73,38 @@ def _proof_horizon_for_freshness(freshness: int) -> int:
             type("A", (), {"plan_freshness": int(freshness)})()
         )
     )
+
+
+def _reset_v34_handoff_cache() -> None:
+    v34._install_handoff_cache().clear()
+
+
+def _reset_v33_deadline_cache() -> None:
+    _V33._install_deadline_cache().clear()
+
+
+def _reset_v32_collect_response_cache() -> None:
+    _V29._COLLECT_RESPONSE_CACHE.clear()
+
+
+def _reset_v29_collect_response_cache() -> None:
+    _V29._COLLECT_RESPONSE_CACHE.clear()
+
+
+def _reset_v28_authority_plan_memory() -> None:
+    _V28._AUTHORITY_PLAN_MEMORY.clear()
+
+
+def _reset_v27_progress_response_cache() -> None:
+    _V27._PROGRESS_RESPONSE_CACHE.clear()
+
+
+def _reset_v27_authority_action_ledger() -> None:
+    _V27._AUTHORITY_ACTION_LEDGER.clear()
+
+
+def _reset_v26_gap_commitment() -> None:
+    v26._reset_gap_commitment()
 
 
 # Transitional composition roots for the current lower objective path.
@@ -88,6 +132,18 @@ _AUTHORITY_RUNTIME_SCOPE = AuthorityRuntimeScope(
         "set_nes_controller_state",
         setter,
     ),
+)
+_AUTHORITY_RUN_RESET_PLAN = AuthorityRunResetPlan(
+    steps=(
+        NamedRunReset("v34-handoff-cache", _reset_v34_handoff_cache),
+        NamedRunReset("v33-deadline-cache", _reset_v33_deadline_cache),
+        NamedRunReset("v32-collect-response-cache", _reset_v32_collect_response_cache),
+        NamedRunReset("v29-collect-response-cache", _reset_v29_collect_response_cache),
+        NamedRunReset("v28-authority-plan-memory", _reset_v28_authority_plan_memory),
+        NamedRunReset("v27-progress-response-cache", _reset_v27_progress_response_cache),
+        NamedRunReset("v27-authority-action-ledger", _reset_v27_authority_action_ledger),
+        NamedRunReset("v26-gap-commitment", _reset_v26_gap_commitment),
+    )
 )
 
 
