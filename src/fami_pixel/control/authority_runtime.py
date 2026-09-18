@@ -2,9 +2,10 @@
 
 Historical planner versions currently own run-start resets and temporarily replace
 ``base.set_nes_controller_state`` at several ancestry levels.  Those are control
-runtime concerns rather than planner policy.  This module provides an explicit,
-injected scope for preserving reset order and LIFO controller-wrapper restoration
-while issue #35 moves the active runner away from versioned authority wrappers.
+runtime concerns rather than planner policy.  This module provides explicit,
+injected contracts for preserving reset order and LIFO controller-wrapper
+restoration while issue #35 moves the active runner away from versioned authority
+wrappers.
 """
 
 from __future__ import annotations
@@ -45,6 +46,47 @@ def authority_action_recording_layer(ledger: Any) -> ControllerLayerFactory:
         return recording_set_controller
 
     return layer
+
+
+@dataclass(frozen=True)
+class NamedRunReset:
+    """One named run-start reset in an authority runtime composition."""
+
+    name: str
+    reset: RunResetter
+
+    def __post_init__(self) -> None:
+        if not str(self.name).strip():
+            raise ValueError("run reset name must be non-empty")
+        if not callable(self.reset):
+            raise TypeError("run reset must be callable")
+
+
+@dataclass(frozen=True)
+class AuthorityRunResetPlan:
+    """Ordered, inspectable run-start reset composition.
+
+    Order is behavioral state: versioned authority wrappers currently clear their
+    caches, memories, ledgers, and commitments while descending the wrapper chain.
+    The plan therefore never sorts or deduplicates steps.  Distinct named steps may
+    intentionally target the same underlying state when that is what the historical
+    runtime does; extraction can remove redundancy only after separate evidence.
+    """
+
+    steps: tuple[NamedRunReset, ...] = ()
+
+    def __post_init__(self) -> None:
+        names = tuple(step.name for step in self.steps)
+        if len(set(names)) != len(names):
+            raise ValueError("run reset step names must be unique")
+
+    @property
+    def names(self) -> tuple[str, ...]:
+        return tuple(step.name for step in self.steps)
+
+    def reset_run_state(self) -> None:
+        for step in self.steps:
+            step.reset()
 
 
 @dataclass(frozen=True)
