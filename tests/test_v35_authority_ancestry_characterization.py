@@ -42,23 +42,23 @@ def test_current_authority_runtime_delegation_chain_is_exact():
     v35 = _load_v35()
     v34, v33, v32, v30, v29, v28, v27, v26, v25 = _authority_modules(v35)
 
-    # Current V35 owns V34/V33/V32/V29 reset/log responsibilities plus V30's
-    # proof-horizon setup and now enters the still-historical ancestry at V28.
+    # Current V35 owns V34/V33/V32/V29/V28 runtime-only responsibilities and now
+    # enters the still-historical authority ancestry at V27.
     expected_current_delegates = (
-        (v35.authority_main, "return _V28.authority_main(args)"),
-        (v28.authority_main, "return v27.authority_main(args)"),
+        (v35.authority_main, "return _V27.authority_main(args)"),
         (v27.authority_main, "return v26.authority_main(args)"),
         (v26.authority_main, "return _BASE_V25_AUTHORITY(args)"),
     )
     for authority, expected in expected_current_delegates:
         assert expected in inspect.getsource(authority)
 
-    # Historical V34/V33/V32/V30/V29 examples remain independently runnable.
+    # Historical V34/V33/V32/V30/V29/V28 examples remain independently runnable.
     assert "return v33.authority_main(args)" in inspect.getsource(v34.authority_main)
     assert "return v32.authority_main(args)" in inspect.getsource(v33.authority_main)
     assert "return v31.v30.authority_main(args)" in inspect.getsource(v32.authority_main)
     assert "return v29.authority_main(args)" in inspect.getsource(v30.authority_main)
     assert "return v28.authority_main(args)" in inspect.getsource(v29.authority_main)
+    assert "return v27.authority_main(args)" in inspect.getsource(v28.authority_main)
 
     assert v26._BASE_V25_AUTHORITY is v25.authority_main
 
@@ -72,7 +72,10 @@ def test_authority_wrappers_preserve_their_current_stateful_responsibilities():
     assert '_AUTHORITY_RUN_RESET_PLAN.reset_through("v32-collect-response-cache")' in v35_source
     assert "_AUTHORITY_RUN_SETUP_PLAN.setup_run_state(args)" in v35_source
     assert '_AUTHORITY_RUN_RESET_PLAN.reset_named("v29-collect-response-cache")' in v35_source
-    assert "return _V28.authority_main(args)" in v35_source
+    assert '_AUTHORITY_RUN_RESET_PLAN.reset_named("v28-authority-plan-memory")' in v35_source
+    assert "with installed_checkpoint_request_enricher(enricher):" in v35_source
+    assert "return _V27.authority_main(args)" in v35_source
+    assert "return _V28.authority_main(args)" not in v35_source
     assert "return _V29.authority_main(args)" not in v35_source
     assert type(v35._AUTHORITY_RUNTIME_SCOPE).__module__ == "fami_pixel.control.authority_runtime"
     assert type(v35._AUTHORITY_RUN_SETUP_PLAN).__module__ == "fami_pixel.control.authority_runtime"
@@ -84,16 +87,16 @@ def test_authority_wrappers_preserve_their_current_stateful_responsibilities():
     assert "v28.COLLECT_PROOF_HORIZON = int(proof_horizon)" in inspect.getsource(v30.authority_main)
     assert "_COLLECT_RESPONSE_CACHE.clear()" in inspect.getsource(v29.authority_main)
 
-    # The duplicate V32/V29 clear remains intentional. Current V35 now owns both
-    # occurrences but preserves V30 setup between them through reset_named().
-    assert v35._AUTHORITY_RUN_RESET_PLAN.names[2:4] == (
-        "v32-collect-response-cache",
-        "v29-collect-response-cache",
-    )
-
     v28_source = inspect.getsource(v28.authority_main)
     assert "_AUTHORITY_PLAN_MEMORY.clear()" in v28_source
+    assert "AuthorityContinuationRequestEnricher(" in v28_source
     assert "with installed_checkpoint_request_enricher(enricher):" in v28_source
+
+    assert v35._AUTHORITY_RUN_RESET_PLAN.names[2:5] == (
+        "v32-collect-response-cache",
+        "v29-collect-response-cache",
+        "v28-authority-plan-memory",
+    )
 
     v27_source = inspect.getsource(v27.authority_main)
     assert "_PROGRESS_RESPONSE_CACHE.clear()" in v27_source
@@ -110,7 +113,7 @@ def test_authority_extraction_boundary_is_runtime_orchestration_not_policy_rewri
     v34, _v33, _v32, _v30, _v29, _v28, v27, v26, _v25 = _authority_modules(v35)
 
     assert "_COLLECT_PROGRESS_CONTROL.decide(" in inspect.getsource(v35._best_collect_or_progress)
-    assert "return _V28.authority_main(args)" in inspect.getsource(v35.authority_main)
+    assert "return _V27.authority_main(args)" in inspect.getsource(v35.authority_main)
 
     # Controller invocation order remains lineage recorder -> live-core capture -> base.
     assert "capture_authority_core" in inspect.getsource(v35.authority_main)
