@@ -9,6 +9,7 @@ from .collect_status import (
     waiting_lineage_collect_meta,
 )
 from .delegates import PlanDelegateSlot
+from .eager_collect import EagerCollectDecision, select_eager_collect_decision
 from .request_enrichment import (
     AuthorityContinuationRequestEnricher,
     RequestPayloadEnricherSlot,
@@ -20,11 +21,13 @@ from .response_intake import read_available_responses
 __all__ = [
     "AuthorityContinuationRequestEnricher",
     "AuthorityPlanMemory",
+    "EagerCollectDecision",
     "PlanDelegateSlot",
     "RequestPayloadEnricherSlot",
     "enrich_checkpoint_request",
     "installed_checkpoint_request_enricher",
     "read_available_responses",
+    "select_eager_collect_decision",
     "selected_collect_anchor_meta",
     "selected_eager_collect_meta",
     "waiting_collect_cohort_meta",
