@@ -1,11 +1,11 @@
-"""Stable authority-run reset and controller-wrapper scope.
+"""Stable authority-run reset/setup and controller-wrapper scope.
 
-Historical planner versions currently own run-start resets and temporarily replace
-``base.set_nes_controller_state`` at several ancestry levels.  Those are control
-runtime concerns rather than planner policy.  This module provides explicit,
-injected contracts for preserving reset order and LIFO controller-wrapper
-restoration while issue #35 moves the active runner away from versioned authority
-wrappers.
+Historical planner versions currently own run-start resets and setup side effects,
+and temporarily replace ``base.set_nes_controller_state`` at several ancestry
+levels. Those are control runtime concerns rather than planner policy. This module
+provides explicit, injected contracts for preserving reset/setup order and LIFO
+controller-wrapper restoration while issue #35 moves the active runner away from
+versioned authority wrappers.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ ControllerSetterGetter = Callable[[], ControllerSetter]
 ControllerSetterInstaller = Callable[[ControllerSetter], None]
 ControllerLayerFactory = Callable[[ControllerSetter], ControllerSetter]
 RunResetter = Callable[[], None]
+RunSetup = Callable[[Any], Any]
 
 
 def authority_action_recording_layer(ledger: Any) -> ControllerLayerFactory:
@@ -27,8 +28,8 @@ def authority_action_recording_layer(ledger: Any) -> ControllerLayerFactory:
 
     The recorder deliberately runs *before* its predecessor setter, matching the
     V27 contract: the final buttons associated with ``frame -> frame+1`` are
-    written to the authority ledger when port 0 is set.  Other controller ports
-    pass through without becoming SMB1 authority lineage.  A ledger's own
+    written to the authority ledger when port 0 is set. Other controller ports
+    pass through without becoming SMB1 authority lineage. A ledger's own
     suspension semantics remain authoritative, so speculative scopes can suppress
     writes without changing this wrapper.
     """
@@ -68,7 +69,7 @@ class AuthorityRunResetPlan:
 
     Order is behavioral state: versioned authority wrappers currently clear their
     caches, memories, ledgers, and commitments while descending the wrapper chain.
-    The plan therefore never sorts or deduplicates steps.  Distinct named steps may
+    The plan therefore never sorts or deduplicates steps. Distinct named steps may
     intentionally target the same underlying state when that is what the historical
     runtime does; extraction can remove redundancy only after separate evidence.
     """
@@ -92,7 +93,7 @@ class AuthorityRunResetPlan:
         """Execute the ordered prefix ending at ``name`` exactly once.
 
         This supports incremental ownership transfer from historical wrappers to
-        a stable composition root.  The target is validated before any reset runs,
+        a stable composition root. The target is validated before any reset runs,
         so a miss cannot leave a partially reset process.
         """
 
@@ -107,13 +108,55 @@ class AuthorityRunResetPlan:
 
 
 @dataclass(frozen=True)
+class NamedRunSetup:
+    """One named run-start configuration step."""
+
+    name: str
+    setup: RunSetup
+
+    def __post_init__(self) -> None:
+        if not str(self.name).strip():
+            raise ValueError("run setup name must be non-empty")
+        if not callable(self.setup):
+            raise TypeError("run setup must be callable")
+
+
+@dataclass(frozen=True)
+class AuthorityRunSetupPlan:
+    """Ordered, inspectable run-start configuration composition.
+
+    Unlike resetters, setup steps may compute and install runtime values that must
+    exist before the delegated authority loop begins. Results are returned by name
+    so the composition root can inspect them without rediscovering dependencies.
+    The plan preserves configured order exactly and never deduplicates steps.
+    """
+
+    steps: tuple[NamedRunSetup, ...] = ()
+
+    def __post_init__(self) -> None:
+        names = tuple(step.name for step in self.steps)
+        if len(set(names)) != len(names):
+            raise ValueError("run setup step names must be unique")
+
+    @property
+    def names(self) -> tuple[str, ...]:
+        return tuple(step.name for step in self.steps)
+
+    def setup_run_state(self, args: Any) -> dict[str, Any]:
+        results: dict[str, Any] = {}
+        for step in self.steps:
+            results[step.name] = step.setup(args)
+        return results
+
+
+@dataclass(frozen=True)
 class AuthorityRuntimeScope:
     """Explicit authority runtime dependencies for one live run.
 
-    ``reset_run_state`` preserves the configured reset order exactly.  Nested
+    ``reset_run_state`` preserves the configured reset order exactly. Nested
     ``controller_layer`` scopes wrap the setter visible at entry time and always
     restore that exact predecessor, including when the delegated authority loop
-    raises.  This is intentionally policy-free: callers inject concrete resetters
+    raises. This is intentionally policy-free: callers inject concrete resetters
     and wrapper factories.
     """
 
