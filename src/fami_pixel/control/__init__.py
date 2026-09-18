@@ -1,7 +1,7 @@
 """Stable live-control composition helpers."""
 
 from .authority_plan import AuthorityPlanMemory
-from .authority_runtime import AuthorityRuntimeScope
+from .authority_runtime import AuthorityRuntimeScope, authority_action_recording_layer
 from .collect_status import (
     selected_collect_anchor_meta,
     selected_eager_collect_meta,
@@ -34,6 +34,7 @@ __all__ = [
     "EagerCollectDecision",
     "PlanDelegateSlot",
     "RequestPayloadEnricherSlot",
+    "authority_action_recording_layer",
     "enrich_checkpoint_request",
     "installed_checkpoint_request_enricher",
     "read_available_responses",
