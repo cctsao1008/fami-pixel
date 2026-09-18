@@ -21,6 +21,32 @@ ControllerLayerFactory = Callable[[ControllerSetter], ControllerSetter]
 RunResetter = Callable[[], None]
 
 
+def authority_action_recording_layer(ledger: Any) -> ControllerLayerFactory:
+    """Build the historical authority-action recorder as an injected layer.
+
+    The recorder deliberately runs *before* its predecessor setter, matching the
+    V27 contract: the final buttons associated with ``frame -> frame+1`` are
+    written to the authority ledger when port 0 is set.  Other controller ports
+    pass through without becoming SMB1 authority lineage.  A ledger's own
+    suspension semantics remain authoritative, so speculative scopes can suppress
+    writes without changing this wrapper.
+    """
+
+    record = getattr(ledger, "record", None)
+    if not callable(record):
+        raise TypeError("authority action ledger must provide callable record(frame, buttons)")
+
+    def layer(predecessor: ControllerSetter) -> ControllerSetter:
+        def recording_set_controller(core: Any, port: int, buttons: int) -> Any:
+            if int(port) == 0:
+                record(int(core.frame_count()), int(buttons))
+            return predecessor(core, port, buttons)
+
+        return recording_set_controller
+
+    return layer
+
+
 @dataclass(frozen=True)
 class AuthorityRuntimeScope:
     """Explicit authority runtime dependencies for one live run.
