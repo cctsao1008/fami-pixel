@@ -42,7 +42,7 @@ def test_current_authority_reset_plan_freezes_exact_historical_descent_order():
         "v26-gap-commitment",
     )
 
-    # V32 and V29 intentionally clear the same historical cache.  The explicit
+    # V32 and V29 intentionally clear the same historical cache. The explicit
     # composition preserves both calls instead of silently deduplicating them.
     assert v35._V29._COLLECT_RESPONSE_CACHE is v35._V30.v29._COLLECT_RESPONSE_CACHE
     assert v35._V27.v26 is v35.v26
@@ -88,27 +88,30 @@ def test_current_authority_reset_plan_executes_concrete_dependencies_in_order(mo
     ]
 
 
-def test_v35_owns_outer_reset_prefix_through_v32_and_enters_at_v30():
+def test_v35_owns_outer_reset_prefix_through_v32_and_enters_at_v29_after_setup():
     v35 = _load_v35()
     source = inspect.getsource(v35.authority_main)
 
     assert '_AUTHORITY_RUN_RESET_PLAN.reset_through("v32-collect-response-cache")' in source
-    assert "return _V30.authority_main(args)" in source
+    assert "_AUTHORITY_RUN_SETUP_PLAN.setup_run_state(args)" in source
+    assert "return _V29.authority_main(args)" in source
+    assert "return _V30.authority_main(args)" not in source
     assert "return _V32.authority_main(args)" not in source
     assert "return v34.authority_main(args)" not in source
 
-    # Historical example runners retain their standalone reset behavior; current
-    # V35 simply no longer enters through these three reset/log wrappers.
+    # Historical example runners retain standalone behavior; current V35 simply
+    # no longer enters through V34/V33/V32/V30.
     assert "_install_handoff_cache().clear()" in inspect.getsource(v35.v34.authority_main)
     assert "_install_deadline_cache().clear()" in inspect.getsource(v35._V33.authority_main)
     assert "v29._COLLECT_RESPONSE_CACHE.clear()" in inspect.getsource(v35._V32.authority_main)
+    assert "v28.COLLECT_PROOF_HORIZON = int(proof_horizon)" in inspect.getsource(v35._V30.authority_main)
 
     # Do not deduplicate the historical V32/V29 reset pair during extraction.
     # V35 owns the former V32 call; V29 still owns the second call deeper down.
     assert "_COLLECT_RESPONSE_CACHE.clear()" in inspect.getsource(v35._V29.authority_main)
 
 
-def test_v35_outer_reset_transfer_runs_each_owned_reset_once_and_bypasses_wrappers(
+def test_v35_outer_reset_transfer_runs_before_setup_and_v29_delegate(
     monkeypatch,
     tmp_path,
 ):
@@ -129,21 +132,27 @@ def test_v35_outer_reset_transfer_runs_each_owned_reset_once_and_bypasses_wrappe
     monkeypatch.setattr(v35.v11, "_log", lambda *_args, **_kwargs: None)
 
     def forbidden(_args):
-        raise AssertionError("bypassed outer historical wrapper was invoked")
+        raise AssertionError("bypassed historical wrapper was invoked")
 
     monkeypatch.setattr(v35.v34, "authority_main", forbidden)
     monkeypatch.setattr(v35._V33, "authority_main", forbidden)
     monkeypatch.setattr(v35._V32, "authority_main", forbidden)
+    monkeypatch.setattr(v35._V30, "authority_main", forbidden)
+    monkeypatch.setattr(
+        v35,
+        "_AUTHORITY_RUN_SETUP_PLAN",
+        SimpleNamespace(setup_run_state=lambda _args: calls.append("v30-setup")),
+    )
 
     def delegated(_args):
-        calls.append("v30")
+        calls.append("v29")
         return 23
 
-    monkeypatch.setattr(v35._V30, "authority_main", delegated)
+    monkeypatch.setattr(v35._V29, "authority_main", delegated)
 
     args = SimpleNamespace(
         step_timeout=1.0,
         checkpoint_dir=tmp_path / "checkpoints" / "live.mss",
     )
     assert v35.authority_main(args) == 23
-    assert calls == ["handoff", "deadline", "collect", "v30"]
+    assert calls == ["handoff", "deadline", "collect", "v30-setup", "v29"]
