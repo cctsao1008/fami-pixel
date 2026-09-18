@@ -8,7 +8,11 @@ from .collect_status import (
     waiting_eager_handoff_meta,
     waiting_lineage_collect_meta,
 )
-from .composition import EagerCollectControl
+from .composition import (
+    CollectProgressControl,
+    CollectProgressDecision,
+    EagerCollectControl,
+)
 from .delegates import PlanDelegateSlot
 from .eager_collect import EagerCollectDecision, select_eager_collect_decision
 from .request_enrichment import (
@@ -22,6 +26,8 @@ from .response_intake import read_available_responses
 __all__ = [
     "AuthorityContinuationRequestEnricher",
     "AuthorityPlanMemory",
+    "CollectProgressControl",
+    "CollectProgressDecision",
     "EagerCollectControl",
     "EagerCollectDecision",
     "PlanDelegateSlot",
