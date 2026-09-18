@@ -106,6 +106,22 @@ class AuthorityRunResetPlan:
             if step.name == target:
                 break
 
+    def reset_named(self, name: str) -> None:
+        """Execute exactly one named reset without replaying earlier reset steps.
+
+        Historical authority wrappers can interleave resets with non-reset setup
+        work. During incremental extraction, a later reset must therefore be
+        movable after the intervening setup without re-running the already-owned
+        prefix. The target is resolved before its side effect runs.
+        """
+
+        target = str(name)
+        for step in self.steps:
+            if step.name == target:
+                step.reset()
+                return
+        raise KeyError(f"unknown run reset step: {target}")
+
 
 @dataclass(frozen=True)
 class NamedRunSetup:
