@@ -91,14 +91,18 @@ def test_v35_installer_preserves_v28_authority_plan_wrapper_over_v26_survive_own
     assert v35.v26._lower_plan_delegate_explicit is True
 
 
-def test_v35_star_selector_is_sync_current_root_then_v34_fallback():
+def test_v35_star_selector_is_sync_current_root_then_stable_async_collect_control():
     v35 = _load_v35()
     source = inspect.getsource(v35._best_collect_or_progress)
 
     assert 'target_type == "star"' in source
     assert "_LIVE_AUTHORITY_CORE is not None" in source
     assert "_sync_star_plan(" in source
-    assert "return v34._best_collect_or_progress(" in source
+    assert "read_available_responses(" in source
+    assert "select_eager_collect_decision(" in source
+    assert "v23._latest_forward_meta = decision.meta" in source
+    assert "return decision.plan" in source
+    assert "return v34._best_collect_or_progress(" not in source
 
 
 def test_v35_sync_speculation_is_excluded_from_authority_action_lineage():
