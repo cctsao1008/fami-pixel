@@ -24,7 +24,7 @@ handoff, or action-lineage guess is involved.  V26 SURVIVE/gap/landing guards
 remain above this lower COLLECT delegate, and V34's asynchronous worker/search
 machinery stays available for non-Star/fallback operation while objective routing,
 PROGRESS fallback, async COLLECT authority scan, controller instrumentation, and
-the outer V34/V33 run-start resets are now bound through stable control
+the outer V34/V33/V32 run-start resets are now bound through stable control
 composition.
 """
 
@@ -373,11 +373,13 @@ def authority_main(args) -> int:
     )
     try:
         with _AUTHORITY_RUNTIME_SCOPE.controller_layer(capture_layer):
-            # Current V35 owns the two outer run-start resets. Historical V34 and
-            # V33 runners remain untouched for standalone provenance, but the
-            # current authority path bypasses their reset/log-only wrappers and
-            # enters at V32 after performing this exact ordered prefix once.
-            _AUTHORITY_RUN_RESET_PLAN.reset_through("v33-deadline-cache")
+            # Current V35 owns the outer run-start resets through V32. Historical
+            # V34/V33/V32 runners remain untouched for standalone provenance, but
+            # the current authority path bypasses their reset/log-only wrappers
+            # and enters at V30 after performing this exact ordered prefix once.
+            # V29 still performs the second historical clear of the same COLLECT
+            # cache, preserving the V32->V29 duplicate reset contract exactly.
+            _AUTHORITY_RUN_RESET_PLAN.reset_through("v32-collect-response-cache")
             v11._log(
                 "Planner V34: eager COLLECT handoffs enabled | "
                 f"handoffs={v34.COLLECT_HANDOFF_FRAMES}; progressive worker publish; "
@@ -387,7 +389,11 @@ def authority_main(args) -> int:
                 "Planner V33: authority-observed COLLECT deadline enabled | "
                 f"deadline={_V33._DEADLINE_FRAMES}f; late workers remain telemetry-only and cannot reopen cohorts"
             )
-            return _V32.authority_main(args)
+            v11._log(
+                "Planner V32: deadline-closed COLLECT cohorts enabled | "
+                f"full quorum before {_V32._cohort_deadline_frames()}f; close partial cohort at latest useful handoff"
+            )
+            return _V30.authority_main(args)
     finally:
         _LIVE_AUTHORITY_CORE = None
 
