@@ -23,7 +23,7 @@ proof is rooted at the actual current authority frame.  No stale rebase, delayed
 handoff, or action-lineage guess is involved.  V26 SURVIVE/gap/landing guards
 remain above this lower COLLECT delegate, and V34's asynchronous worker/search
 machinery stays available for non-Star/fallback operation while its authority
-scan is now delegated to stable control orchestration.
+scan and dependencies are now bound through stable control composition.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from __future__ import annotations
 from pathlib import Path
 import time
 
-from fami_pixel.control import read_available_responses, select_eager_collect_decision
+from fami_pixel.control import EagerCollectControl
 
 import mesen_smb_checkpoint_planner as base
 import mesen_smb_checkpoint_planner_v11 as v11
@@ -46,6 +46,31 @@ PLANNER_NAME = "v35-sync-current-root-star-collect"
 _LIVE_AUTHORITY_CORE = None
 _SYNC_STEP_TIMEOUT = 2.0
 _SYNC_CHECKPOINT = Path("build/checkpoints/v35-sync-star-current.mss")
+
+
+def _proof_horizon_for_freshness(freshness: int) -> int:
+    """Compatibility adapter for the historical proof-horizon implementation."""
+
+    return int(
+        v34.v30._proof_horizon(
+            type("A", (), {"plan_freshness": int(freshness)})()
+        )
+    )
+
+
+# Transitional composition root for the current asynchronous COLLECT path.
+# Historical modules still provide concrete implementations, but the selector
+# below no longer discovers those dependencies by reaching through V34 globals.
+_EAGER_COLLECT_CONTROL = EagerCollectControl(
+    response_reader=v11._read_json,
+    cache_provider=v34._install_handoff_cache,
+    handoff_frames=tuple(v34.COLLECT_HANDOFF_FRAMES),
+    active_workers=v34._active_collect_workers,
+    proof_selector=v34.select_lineage_collect_proof,
+    ledger=v34.v27._AUTHORITY_ACTION_LEDGER,
+    proof_horizon_frames=_proof_horizon_for_freshness,
+    commit_frames=v23.EXECUTION_PREFIX_FRAMES,
+)
 
 
 def _sync_star_plan_untracked(core, *, current_frame: int, live_radar: dict) -> dict | None:
@@ -203,7 +228,7 @@ def _sync_star_plan(core, *, current_frame: int, live_radar: dict) -> dict | Non
     controller writes can never masquerade as authoritative history.
     """
 
-    ledger = v34.v27._AUTHORITY_ACTION_LEDGER
+    ledger = _EAGER_COLLECT_CONTROL.ledger
     with ledger.suspend_recording():
         return _sync_star_plan_untracked(
             core,
@@ -240,28 +265,13 @@ def _best_collect_or_progress(
             live_radar,
         )
 
-    responses = read_available_responses(response_paths, reader=v11._read_json)
-    retention = max(
-        int(freshness),
-        int(
-            v34.v30._proof_horizon(
-                type("A", (), {"plan_freshness": freshness})()
-            )
-        ),
-    )
-    decision = select_eager_collect_decision(
-        responses,
-        cache=v34._install_handoff_cache(),
-        handoff_frames=v34.COLLECT_HANDOFF_FRAMES,
+    decision = _EAGER_COLLECT_CONTROL.decide(
+        response_paths,
         current_frame=current_frame,
+        freshness=freshness,
         last_applied_generation=last_applied_generation,
         target_type=target_type,
         live_radar=live_radar,
-        retention_frames=retention,
-        active_workers=v34._active_collect_workers(len(response_paths)),
-        proof_selector=v34.select_lineage_collect_proof,
-        ledger=v34.v27._AUTHORITY_ACTION_LEDGER,
-        commit_frames=v23.EXECUTION_PREFIX_FRAMES,
     )
     v23._latest_forward_meta = decision.meta
     return decision.plan
