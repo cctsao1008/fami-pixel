@@ -47,6 +47,8 @@ from fami_pixel.planning import (
     collect_anchor_proofs,
     evaluate_handoff_stage,
     ordered_handoffs,
+    select_collect_proof,
+    shape_eager_collect_result,
 )
 
 import mesen_smb_checkpoint_planner as base
@@ -378,19 +380,14 @@ def shadow_worker_main(args) -> int:
 
 
 def _selected_result(selection, *, current_frame: int, live_radar: dict, handoff: int) -> dict:
-    result = dict(selection.proof)
-    source_root = int(result["root_frame"])
-    source_age = int(current_frame) - source_root
-    result["trajectory_root_frame"] = source_root
-    result["trajectory_source_age_frames"] = source_age
-    result["root_frame"] = source_root
-    result["age"] = source_age
-    result["guard_mode"] = (
-        f"collect-eager-handoff[{handoff}f,{result.get('candidate')},"
-        f"src-age:{source_age}f,lease:{result.get('proof_remaining_frames')}f]"
+    """Compatibility wrapper around the stable selected-result shaper."""
+
+    return shape_eager_collect_result(
+        selection,
+        current_frame=current_frame,
+        live_radar=live_radar,
+        handoff_frames=int(handoff),
     )
-    result["live_radar"] = dict(live_radar or {})
-    return result
 
 
 def _best_collect_or_progress(
@@ -458,8 +455,9 @@ def _best_collect_or_progress(
             if not stage.rankable:
                 continue
 
-            selection = select_lineage_collect_proof(
+            selection = select_collect_proof(
                 proofs,
+                selector=select_lineage_collect_proof,
                 ledger=v27._AUTHORITY_ACTION_LEDGER,
                 current_frame=current_frame,
                 last_applied_generation=last_applied_generation,
@@ -511,8 +509,9 @@ def _best_collect_or_progress(
             # existing plan exact, but it never outranks an available reward stage.
             anchors = collect_anchor_proofs(cohort)
             if anchors:
-                selection = select_lineage_collect_proof(
+                selection = select_collect_proof(
                     anchors,
+                    selector=select_lineage_collect_proof,
                     ledger=v27._AUTHORITY_ACTION_LEDGER,
                     current_frame=current_frame,
                     last_applied_generation=last_applied_generation,
