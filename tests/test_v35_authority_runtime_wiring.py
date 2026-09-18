@@ -82,17 +82,18 @@ def test_v35_authority_scope_captures_live_core_records_lineage_and_restores_pre
     _disable_outer_runtime_side_effects(monkeypatch, v35)
     v35._V27._AUTHORITY_ACTION_LEDGER.clear()
 
-    def delegated(_args):
-        installed = v35.base.set_nes_controller_state
-        assert installed is not base_setter
-        core = _Core(42)
-        captured["core"] = core
-        assert installed(core, 0, 0x82) == "base-result"
-        assert v35._LIVE_AUTHORITY_CORE is core
-        assert v35._V27._AUTHORITY_ACTION_LEDGER.buttons_between(42, 43) == (0x82,)
-        return 17
+    class Control:
+        def run(self, _args):
+            installed = v35.base.set_nes_controller_state
+            assert installed is not base_setter
+            core = _Core(42)
+            captured["core"] = core
+            assert installed(core, 0, 0x82) == "base-result"
+            assert v35._LIVE_AUTHORITY_CORE is core
+            assert v35._V27._AUTHORITY_ACTION_LEDGER.buttons_between(42, 43) == (0x82,)
+            return 17
 
-    monkeypatch.setattr(v35._V17, "authority_main", delegated)
+    monkeypatch.setattr(v35, "_build_live_authority_control", lambda: Control())
 
     assert v35.authority_main(_args(tmp_path)) == 17
     assert base_calls == [(captured["core"], 0, 0x82)]
@@ -102,7 +103,7 @@ def test_v35_authority_scope_captures_live_core_records_lineage_and_restores_pre
     assert v35._SYNC_CHECKPOINT == (tmp_path / "checkpoints" / "v35-sync-star-current.mss").resolve()
 
 
-def test_v35_authority_scope_restores_controller_and_live_core_on_delegate_error(monkeypatch, tmp_path):
+def test_v35_authority_scope_restores_controller_and_live_core_on_stable_loop_error(monkeypatch, tmp_path):
     v35 = _load_v35()
 
     def base_setter(core, port, buttons):
@@ -113,17 +114,18 @@ def test_v35_authority_scope_restores_controller_and_live_core_on_delegate_error
     _disable_outer_runtime_side_effects(monkeypatch, v35)
     v35._V27._AUTHORITY_ACTION_LEDGER.clear()
 
-    def delegated(_args):
-        installed = v35.base.set_nes_controller_state
-        core = _Core(77)
-        installed(core, 0, 0x80)
-        assert v35._LIVE_AUTHORITY_CORE is core
-        assert v35._V27._AUTHORITY_ACTION_LEDGER.buttons_between(77, 78) == (0x80,)
-        raise RuntimeError("delegated authority failed")
+    class Control:
+        def run(self, _args):
+            installed = v35.base.set_nes_controller_state
+            core = _Core(77)
+            installed(core, 0, 0x80)
+            assert v35._LIVE_AUTHORITY_CORE is core
+            assert v35._V27._AUTHORITY_ACTION_LEDGER.buttons_between(77, 78) == (0x80,)
+            raise RuntimeError("stable authority failed")
 
-    monkeypatch.setattr(v35._V17, "authority_main", delegated)
+    monkeypatch.setattr(v35, "_build_live_authority_control", lambda: Control())
 
-    with pytest.raises(RuntimeError, match="delegated authority failed"):
+    with pytest.raises(RuntimeError, match="stable authority failed"):
         v35.authority_main(_args(tmp_path))
 
     assert v35.base.set_nes_controller_state is base_setter
