@@ -63,7 +63,7 @@ def test_v30_proof_horizon_is_installed_before_v29_authority_delegate(monkeypatc
     assert calls[1] == ("delegate", 37)
 
 
-def test_current_v35_keeps_v30_setup_before_transferred_v29_v28_v27_v26_runtime():
+def test_current_v35_keeps_v30_setup_before_transferred_v29_through_v25_runtime():
     v35 = _load_v35()
     source = inspect.getsource(v35.authority_main)
 
@@ -75,7 +75,9 @@ def test_current_v35_keeps_v30_setup_before_transferred_v29_v28_v27_v26_runtime(
     assert '_AUTHORITY_RUN_RESET_PLAN.reset_named("v27-progress-response-cache")' in source
     assert '_AUTHORITY_RUN_RESET_PLAN.reset_named("v27-authority-action-ledger")' in source
     assert '_AUTHORITY_RUN_RESET_PLAN.reset_named("v26-gap-commitment")' in source
-    assert "return v26._BASE_V25_AUTHORITY(args)" in source
+    assert '_AUTHORITY_RUN_RESET_PLAN.reset_named("v25-live-objective")' in source
+    assert "return _BASE_V23_AUTHORITY(args)" in source
+    assert "return v26._BASE_V25_AUTHORITY(args)" not in source
     assert "return v26.authority_main(args)" not in source
     assert "return _V27.authority_main(args)" not in source
     assert "return _V28.authority_main(args)" not in source
@@ -107,7 +109,7 @@ def test_v35_stable_v30_setup_runs_before_transferred_lower_runtime(monkeypatch,
         calls.append(("delegate", int(v35._V28.COLLECT_PROOF_HORIZON)))
         return 29
 
-    monkeypatch.setattr(v35.v26, "_BASE_V25_AUTHORITY", delegated)
+    monkeypatch.setattr(v35, "_BASE_V23_AUTHORITY", delegated)
 
     args = SimpleNamespace(
         step_timeout=1.0,
@@ -126,6 +128,7 @@ def test_v35_stable_v30_setup_runs_before_transferred_lower_runtime(monkeypatch,
     v27_progress_index = calls.index(("v27-progress-response-cache", 41))
     v27_ledger_index = calls.index(("v27-authority-action-ledger", 41))
     v26_gap_index = calls.index(("v26-gap-commitment", 41))
+    v25_objective_index = calls.index(("v25-live-objective", 41))
     delegate_index = calls.index(("delegate", 41))
     assert (
         v30_log_index
@@ -134,5 +137,6 @@ def test_v35_stable_v30_setup_runs_before_transferred_lower_runtime(monkeypatch,
         < v27_progress_index
         < v27_ledger_index
         < v26_gap_index
+        < v25_objective_index
         < delegate_index
     )
