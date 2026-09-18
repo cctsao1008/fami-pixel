@@ -71,6 +71,17 @@ def test_v28_remember_authority_plan_uses_stable_control_memory():
     assert snapshot["candidate"] == "candidate-a"
 
 
+def test_v28_authority_installs_stable_request_enricher_without_patching_serializer():
+    v28 = _load_v28()
+    source = inspect.getsource(v28.authority_main)
+
+    assert "AuthorityContinuationRequestEnricher(" in source
+    assert "with installed_checkpoint_request_enricher(enricher):" in source
+    assert "return v27.authority_main(args)" in source
+    assert "v11._atomic_json =" not in source
+    assert "original_atomic_json" not in source
+
+
 def test_v28_installer_replaces_only_lower_collect_progress_delegate_and_worker():
     v28 = _load_v28()
     source = inspect.getsource(v28._install_v28_overrides)
