@@ -142,7 +142,7 @@ def test_v35_sync_speculation_uses_composed_authority_ledger():
     assert "v34.v27._AUTHORITY_ACTION_LEDGER" not in source
 
 
-def test_v35_authority_wrapper_uses_stable_runtime_scope_reset_setup_and_enrichment():
+def test_v35_authority_wrapper_uses_stable_runtime_scope_reset_setup_and_lineage():
     v35 = _load_v35()
     source = inspect.getsource(v35.authority_main)
 
@@ -155,17 +155,14 @@ def test_v35_authority_wrapper_uses_stable_runtime_scope_reset_setup_and_enrichm
     assert "_AUTHORITY_RUN_SETUP_PLAN.setup_run_state(args)" in source
     assert '_AUTHORITY_RUN_RESET_PLAN.reset_named("v29-collect-response-cache")' in source
     assert '_AUTHORITY_RUN_RESET_PLAN.reset_named("v28-authority-plan-memory")' in source
-    assert "enricher = _v28_checkpoint_request_enricher()" in source
     assert "with installed_checkpoint_request_enricher(enricher):" in source
-    assert "return _V27.authority_main(args)" in source
+    assert '_AUTHORITY_RUN_RESET_PLAN.reset_named("v27-progress-response-cache")' in source
+    assert '_AUTHORITY_RUN_RESET_PLAN.reset_named("v27-authority-action-ledger")' in source
+    assert "authority_action_recording_layer(_V27._AUTHORITY_ACTION_LEDGER)" in source
+    assert source.count("_AUTHORITY_RUNTIME_SCOPE.controller_layer(") == 2
+    assert "return v26.authority_main(args)" in source
+    assert "return _V27.authority_main(args)" not in source
     assert "return _V28.authority_main(args)" not in source
-    assert "return _V29.authority_main(args)" not in source
     assert "_LIVE_AUTHORITY_CORE = None" in source
     assert "base.set_nes_controller_state = capture_authority_core" not in source
     assert "base.set_nes_controller_state = original_set_controller" not in source
-
-    enricher_source = inspect.getsource(v35._v28_checkpoint_request_enricher)
-    assert "AuthorityContinuationRequestEnricher(" in enricher_source
-    assert "_V28._AUTHORITY_PLAN_MEMORY" in enricher_source
-    assert "proof_horizon=int(_V28.COLLECT_PROOF_HORIZON)" in enricher_source
-    assert "projector=_V28.schedule_window" in enricher_source
