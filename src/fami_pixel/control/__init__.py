@@ -3,8 +3,10 @@
 from .authority_plan import AuthorityPlanMemory
 from .authority_runtime import (
     AuthorityRunResetPlan,
+    AuthorityRunSetupPlan,
     AuthorityRuntimeScope,
     NamedRunReset,
+    NamedRunSetup,
     authority_action_recording_layer,
 )
 from .collect_status import (
@@ -33,12 +35,14 @@ __all__ = [
     "AuthorityContinuationRequestEnricher",
     "AuthorityPlanMemory",
     "AuthorityRunResetPlan",
+    "AuthorityRunSetupPlan",
     "AuthorityRuntimeScope",
     "CollectProgressControl",
     "CollectProgressDecision",
     "EagerCollectControl",
     "EagerCollectDecision",
     "NamedRunReset",
+    "NamedRunSetup",
     "PlanDelegateSlot",
     "RequestPayloadEnricherSlot",
     "authority_action_recording_layer",
