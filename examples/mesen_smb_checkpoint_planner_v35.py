@@ -23,8 +23,8 @@ proof is rooted at the actual current authority frame.  No stale rebase, delayed
 handoff, or action-lineage guess is involved.  V26 SURVIVE/gap/landing guards
 remain above this lower COLLECT delegate, and V34's asynchronous worker/search
 machinery stays available for non-Star/fallback operation while objective routing,
-PROGRESS fallback, and async COLLECT authority scan are now bound through stable
-control composition.
+PROGRESS fallback, async COLLECT authority scan, and the outer live-core capture
+scope are now bound through stable control composition.
 """
 
 from __future__ import annotations
@@ -32,7 +32,11 @@ from __future__ import annotations
 from pathlib import Path
 import time
 
-from fami_pixel.control import CollectProgressControl, EagerCollectControl
+from fami_pixel.control import (
+    AuthorityRuntimeScope,
+    CollectProgressControl,
+    EagerCollectControl,
+)
 
 import mesen_smb_checkpoint_planner as base
 import mesen_smb_checkpoint_planner_v11 as v11
@@ -76,6 +80,14 @@ _COLLECT_PROGRESS_CONTROL = CollectProgressControl(
     target_selector=v25._collect_target_from_radar,
     progress_selector=v34.v27._best_forward_plan_partial_v27,
     eager_collect=_EAGER_COLLECT_CONTROL,
+)
+_AUTHORITY_RUNTIME_SCOPE = AuthorityRuntimeScope(
+    get_controller_setter=lambda: base.set_nes_controller_state,
+    install_controller_setter=lambda setter: setattr(
+        base,
+        "set_nes_controller_state",
+        setter,
+    ),
 )
 
 
@@ -276,7 +288,7 @@ def _best_collect_or_progress(
 
 
 def authority_main(args) -> int:
-    """Capture the authority core without recording simulated branch actions."""
+    """Capture the live authority core through the stable controller scope."""
 
     global _LIVE_AUTHORITY_CORE, _SYNC_STEP_TIMEOUT, _SYNC_CHECKPOINT
     _LIVE_AUTHORITY_CORE = None
@@ -285,27 +297,27 @@ def authority_main(args) -> int:
         args.checkpoint_dir.expanduser().resolve().parent / "v35-sync-star-current.mss"
     )
 
-    original_set_controller = base.set_nes_controller_state
+    def capture_layer(original_set_controller):
+        def capture_authority_core(core, port, buttons):
+            global _LIVE_AUTHORITY_CORE
+            if int(port) == 0:
+                _LIVE_AUTHORITY_CORE = core
+            return original_set_controller(core, port, buttons)
 
-    def capture_authority_core(core, port, buttons):
-        global _LIVE_AUTHORITY_CORE
-        if int(port) == 0:
-            _LIVE_AUTHORITY_CORE = core
-        return original_set_controller(core, port, buttons)
+        return capture_authority_core
 
     # V27 installs its action-ledger wrapper later in the authority chain.  It
-    # will call this capture wrapper as its original setter, so actual authority
-    # actions are still recorded exactly once.  V35 explicitly suspends ledger
-    # writes across its synchronous speculative save/restore/search scope.
-    base.set_nes_controller_state = capture_authority_core
+    # wraps the setter visible inside this stable scope, so real authority calls
+    # remain recording -> capture -> base.  V35 separately suspends ledger writes
+    # across synchronous speculative save/restore/search.
     v11._log(
         "Planner V35: synchronous current-root Star micro-MPC enabled | "
         "pause live frames during 8x4f exact reward search; V26 SURVIVE remains higher authority"
     )
     try:
-        return v34.authority_main(args)
+        with _AUTHORITY_RUNTIME_SCOPE.controller_layer(capture_layer):
+            return v34.authority_main(args)
     finally:
-        base.set_nes_controller_state = original_set_controller
         _LIVE_AUTHORITY_CORE = None
 
 
