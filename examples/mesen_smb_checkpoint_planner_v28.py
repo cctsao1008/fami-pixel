@@ -30,6 +30,7 @@ from __future__ import annotations
 from pathlib import Path
 import time
 
+from fami_pixel.control import AuthorityPlanMemory
 from fami_pixel.games.smb1.action_lineage import schedule_buttons_at
 from fami_pixel.games.smb1.collect_delay import (
     DEFAULT_COLLECT_HANDOFF_FRAMES,
@@ -56,42 +57,22 @@ COLLECT_PROOF_HORIZON = DEFAULT_COLLECT_PROOF_HORIZON
 CONTINUATION_CANDIDATE = "collect_continue_authority"
 
 _BASE_V26_PLAN = v26._best_v26_plan
-_LATEST_AUTHORITY_PLAN: dict | None = None
+_AUTHORITY_PLAN_MEMORY = AuthorityPlanMemory()
 
 
 def _remember_authority_plan(plan: dict | None) -> None:
     """Remember the actual selected schedule so the next checkpoint can warm-start."""
 
-    global _LATEST_AUTHORITY_PLAN
-    if not plan:
-        return
-    schedule = plan.get("schedule") or ()
-    if not schedule:
-        return
-    try:
-        root_frame = int(plan["root_frame"])
-    except (KeyError, TypeError, ValueError):
-        return
-    _LATEST_AUTHORITY_PLAN = {
-        "root_frame": root_frame,
-        "candidate": str(plan.get("candidate") or "unknown"),
-        "schedule": [dict(segment) for segment in schedule],
-    }
+    _AUTHORITY_PLAN_MEMORY.remember(plan)
 
 
 def _continuation_schedule_for_frame(frame: int) -> list[dict[str, int]]:
     """Project the currently selected live schedule from ``frame`` for 24f."""
 
-    if _LATEST_AUTHORITY_PLAN is None:
-        return []
-    root = int(_LATEST_AUTHORITY_PLAN["root_frame"])
-    age = int(frame) - root
-    if age < 0:
-        return []
-    return schedule_window(
-        _LATEST_AUTHORITY_PLAN["schedule"],
-        start_age=age,
+    return _AUTHORITY_PLAN_MEMORY.continuation(
+        int(frame),
         frames=COLLECT_PROOF_HORIZON,
+        projector=schedule_window,
     )
 
 
@@ -527,8 +508,7 @@ def _v28_schedule_label(candidate_name: str) -> str:
 def authority_main(args) -> int:
     """Inject current-plan continuation into checkpoint requests; V27 records lineage."""
 
-    global _LATEST_AUTHORITY_PLAN
-    _LATEST_AUTHORITY_PLAN = None
+    _AUTHORITY_PLAN_MEMORY.clear()
     original_atomic_json = v11._atomic_json
 
     def continuation_atomic_json(path, payload):
@@ -541,16 +521,13 @@ def authority_main(args) -> int:
         ):
             continuation = _continuation_schedule_for_frame(int(data["frame"]))
             if continuation:
+                snapshot = _AUTHORITY_PLAN_MEMORY.snapshot
                 data["authority_continuation_schedule"] = continuation
                 data["authority_continuation_candidate"] = (
-                    None
-                    if _LATEST_AUTHORITY_PLAN is None
-                    else _LATEST_AUTHORITY_PLAN.get("candidate")
+                    None if snapshot is None else snapshot.get("candidate")
                 )
                 data["authority_continuation_root_frame"] = (
-                    None
-                    if _LATEST_AUTHORITY_PLAN is None
-                    else _LATEST_AUTHORITY_PLAN.get("root_frame")
+                    None if snapshot is None else snapshot.get("root_frame")
                 )
         return original_atomic_json(path, data)
 
