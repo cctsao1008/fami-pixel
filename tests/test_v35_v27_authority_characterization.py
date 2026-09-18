@@ -45,17 +45,20 @@ def test_current_v35_extracts_v27_runtime_and_keeps_recorder_around_lower_author
     ledger = '_AUTHORITY_RUN_RESET_PLAN.reset_named("v27-authority-action-ledger")'
     recorder = "authority_action_recording_layer(_V27._AUTHORITY_ACTION_LEDGER)"
     v26_reset = '_AUTHORITY_RUN_RESET_PLAN.reset_named("v26-gap-commitment")'
-    delegate = "return v26._BASE_V25_AUTHORITY(args)"
+    v25_reset = '_AUTHORITY_RUN_RESET_PLAN.reset_named("v25-live-objective")'
+    delegate = "return _BASE_V23_AUTHORITY(args)"
 
-    for token in (progress, ledger, recorder, v26_reset, delegate):
+    for token in (progress, ledger, recorder, v26_reset, v25_reset, delegate):
         assert token in source
     assert (
         source.index(progress)
         < source.index(ledger)
         < source.index(recorder)
         < source.index(v26_reset)
+        < source.index(v25_reset)
         < source.index(delegate)
     )
+    assert "return v26._BASE_V25_AUTHORITY(args)" not in source
     assert "return v26.authority_main(args)" not in source
     assert "return _V27.authority_main(args)" not in source
 
@@ -81,19 +84,20 @@ def test_v35_v27_resets_occur_inside_v28_enrichment_before_lower_authority(monke
     monkeypatch.setattr(v35, "_AUTHORITY_RUN_RESET_PLAN", ResetPlan())
 
     def delegated(_args):
-        calls.append("v25")
-        return 26
+        calls.append("v23")
+        return 23
 
-    monkeypatch.setattr(v35.v26, "_BASE_V25_AUTHORITY", delegated)
+    monkeypatch.setattr(v35, "_BASE_V23_AUTHORITY", delegated)
 
     args = SimpleNamespace(
         step_timeout=1.0,
         checkpoint_dir=tmp_path / "checkpoints" / "live.mss",
     )
-    assert v35.authority_main(args) == 26
-    assert calls[-4:] == [
+    assert v35.authority_main(args) == 23
+    assert calls[-5:] == [
         "v27-progress-response-cache",
         "v27-authority-action-ledger",
         "v26-gap-commitment",
-        "v25",
+        "v25-live-objective",
+        "v23",
     ]
