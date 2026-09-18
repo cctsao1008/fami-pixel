@@ -24,8 +24,9 @@ handoff, or action-lineage guess is involved. V26 SURVIVE/gap/landing guards
 remain above this lower COLLECT delegate, and V34's asynchronous worker/search
 machinery stays available for non-Star/fallback operation while objective routing,
 PROGRESS fallback, async COLLECT authority scan, controller instrumentation,
-V34/V33/V32/V29/V28 run-start resets, V30 proof-horizon setup, and V28 checkpoint
-request enrichment are now bound through stable control composition.
+V34/V33/V32/V29/V28/V27 run-start resets, V30 proof-horizon setup, V28 checkpoint
+request enrichment, and V27 authority-action lineage recording are now bound
+through stable control composition.
 """
 
 from __future__ import annotations
@@ -42,6 +43,7 @@ from fami_pixel.control import (
     EagerCollectControl,
     NamedRunReset,
     NamedRunSetup,
+    authority_action_recording_layer,
     installed_checkpoint_request_enricher,
 )
 
@@ -401,10 +403,11 @@ def authority_main(args) -> int:
 
         return capture_authority_core
 
-    # V27 installs its action-ledger wrapper later in the remaining historical
-    # authority chain. It wraps the setter visible inside this stable scope, so
-    # real authority calls remain recording -> capture -> base. V35 separately
-    # suspends ledger writes across synchronous speculative save/restore/search.
+    # Current V35 owns both controller instrumentation layers. The inner lineage
+    # recorder wraps the live-core capture setter installed by this outer scope,
+    # preserving the historical invocation order recording -> capture -> base.
+    # Synchronous Star speculation separately suspends ledger writes while it
+    # saves/restores/explores counterfactual futures.
     v11._log(
         "Planner V35: synchronous current-root Star micro-MPC enabled | "
         "pause live frames during 8x4f exact reward search; V26 SURVIVE remains higher authority"
@@ -413,9 +416,10 @@ def authority_main(args) -> int:
         with _AUTHORITY_RUNTIME_SCOPE.controller_layer(capture_layer):
             # Preserve the historical runtime order exactly while transferring
             # ownership: V32's first COLLECT-cache clear happens in the stable
-            # prefix, V30 installs the proof horizon, then V29 performs the second
-            # cache clear, and V28 clears current-plan memory before installing
-            # its bounded checkpoint-request enricher around V27 authority.
+            # prefix, V30 installs the proof horizon, V29 performs the second
+            # cache clear, V28 clears current-plan memory and installs request
+            # enrichment, then V27 clears PROGRESS/lineage state and installs the
+            # authority-action recorder before entering V26.
             _AUTHORITY_RUN_RESET_PLAN.reset_through("v32-collect-response-cache")
             v11._log(
                 "Planner V34: eager COLLECT handoffs enabled | "
@@ -444,7 +448,18 @@ def authority_main(args) -> int:
                 "branch-level reward proofs + current-plan continuation anchor + lineage lease"
             )
             with installed_checkpoint_request_enricher(enricher):
-                return _V27.authority_main(args)
+                _AUTHORITY_RUN_RESET_PLAN.reset_named("v27-progress-response-cache")
+                _AUTHORITY_RUN_RESET_PLAN.reset_named("v27-authority-action-ledger")
+                v11._log(
+                    "Planner V27: bounded multi-chunk PROGRESS search enabled | "
+                    f"depth={_V27.SEARCH_DEPTH} top-k={_V27.SEARCH_TOP_K} surrogate rank/prune -> exact Mesen; "
+                    "delayed proofs require action-lineage match + remaining proof lease; "
+                    "V26 SURVIVE + V25 COLLECT remain higher authority"
+                )
+                with _AUTHORITY_RUNTIME_SCOPE.controller_layer(
+                    authority_action_recording_layer(_V27._AUTHORITY_ACTION_LEDGER)
+                ):
+                    return v26.authority_main(args)
     finally:
         _LIVE_AUTHORITY_CORE = None
 
