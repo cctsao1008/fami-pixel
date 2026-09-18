@@ -37,7 +37,6 @@ def test_v30_authority_runtime_responsibility_is_proof_horizon_setup_log_and_del
     assert '"Planner V30: shared-prefix delayed COLLECT enabled | "' in source
     assert "return v29.authority_main(args)" in source
 
-    # V30 authority_main owns no run reset and no controller instrumentation.
     assert ".clear()" not in source
     assert "controller_layer(" not in source
     assert "set_nes_controller_state" not in source
@@ -64,40 +63,44 @@ def test_v30_proof_horizon_is_installed_before_v29_authority_delegate(monkeypatc
     assert calls[1] == ("delegate", 37)
 
 
-def test_current_v35_extracts_v30_setup_and_enters_v29_directly():
+def test_current_v35_extracts_v30_setup_and_bypasses_v29_after_its_reset():
     v35 = _load_v35()
     source = inspect.getsource(v35.authority_main)
 
     assert type(v35._AUTHORITY_RUN_SETUP_PLAN).__module__ == "fami_pixel.control.authority_runtime"
     assert v35._AUTHORITY_RUN_SETUP_PLAN.names == ("v30-collect-proof-horizon",)
     assert "_AUTHORITY_RUN_SETUP_PLAN.setup_run_state(args)" in source
-    assert "return _V29.authority_main(args)" in source
+    assert '_AUTHORITY_RUN_RESET_PLAN.reset_named("v29-collect-response-cache")' in source
+    assert "return _V28.authority_main(args)" in source
+    assert "return _V29.authority_main(args)" not in source
     assert "return _V30.authority_main(args)" not in source
 
-    # Historical V30 remains independently runnable with its original setup and
-    # delegation behavior even though current V35 no longer enters through it.
     historical = inspect.getsource(v35._V30.authority_main)
     assert "v28.COLLECT_PROOF_HORIZON = int(proof_horizon)" in historical
     assert "return v29.authority_main(args)" in historical
 
 
-def test_v35_stable_v30_setup_installs_horizon_before_v29_delegate(monkeypatch, tmp_path):
+def test_v35_stable_v30_setup_runs_before_v29_reset_and_v28_delegate(monkeypatch, tmp_path):
     v35 = _load_v35()
     calls = []
 
     monkeypatch.setattr(v35._V30, "_proof_horizon", lambda _args: 41)
     monkeypatch.setattr(v35.v11, "_log", lambda message: calls.append(("log", message)))
-    monkeypatch.setattr(
-        v35,
-        "_AUTHORITY_RUN_RESET_PLAN",
-        SimpleNamespace(reset_through=lambda _name: None),
-    )
+
+    class ResetPlan:
+        def reset_through(self, _name):
+            calls.append(("reset-prefix", int(v35._V28.COLLECT_PROOF_HORIZON)))
+
+        def reset_named(self, name):
+            calls.append((name, int(v35._V28.COLLECT_PROOF_HORIZON)))
+
+    monkeypatch.setattr(v35, "_AUTHORITY_RUN_RESET_PLAN", ResetPlan())
 
     def delegated(_args):
         calls.append(("delegate", int(v35._V28.COLLECT_PROOF_HORIZON)))
         return 29
 
-    monkeypatch.setattr(v35._V29, "authority_main", delegated)
+    monkeypatch.setattr(v35._V28, "authority_main", delegated)
 
     args = SimpleNamespace(
         step_timeout=1.0,
@@ -106,7 +109,11 @@ def test_v35_stable_v30_setup_installs_horizon_before_v29_delegate(monkeypatch, 
     )
     assert v35.authority_main(args) == 29
     assert int(v35._V28.COLLECT_PROOF_HORIZON) == 41
-    v30_logs = [message for kind, message in calls if kind == "log" and "Planner V30:" in message]
-    assert len(v30_logs) == 1
-    assert "proof-horizon=41f" in v30_logs[0]
-    assert calls[-1] == ("delegate", 41)
+
+    v30_log_index = next(
+        i for i, item in enumerate(calls)
+        if item[0] == "log" and "Planner V30:" in item[1]
+    )
+    v29_reset_index = calls.index(("v29-collect-response-cache", 41))
+    delegate_index = calls.index(("delegate", 41))
+    assert v30_log_index < v29_reset_index < delegate_index
