@@ -24,7 +24,7 @@ handoff, or action-lineage guess is involved. V26 SURVIVE/gap/landing guards
 remain above this lower COLLECT delegate, and V34's asynchronous worker/search
 machinery stays available for non-Star/fallback operation while objective routing,
 PROGRESS fallback, async COLLECT authority scan, controller instrumentation,
-outer V34/V33/V32 run-start resets, and V30 proof-horizon setup are now bound
+outer V34/V33/V32/V29 run-start resets, and V30 proof-horizon setup are now bound
 through stable control composition.
 """
 
@@ -399,12 +399,11 @@ def authority_main(args) -> int:
     )
     try:
         with _AUTHORITY_RUNTIME_SCOPE.controller_layer(capture_layer):
-            # Current V35 owns the outer run-start resets through V32 and V30's
-            # proof-horizon setup. Historical V34/V33/V32/V30 runners remain
-            # untouched for standalone provenance. The active path performs the
-            # exact reset prefix, installs the V30 runtime horizon once, and then
-            # enters V29. V29 still performs the second historical clear of the
-            # same COLLECT cache, preserving the duplicate reset contract exactly.
+            # Preserve the historical runtime order exactly while transferring
+            # ownership: V32's first COLLECT-cache clear happens in the stable
+            # prefix, V30 installs the proof horizon, then V29 performs the second
+            # clear through one named reset. Current V35 therefore bypasses V29
+            # without moving that reset ahead of the V30 setup.
             _AUTHORITY_RUN_RESET_PLAN.reset_through("v32-collect-response-cache")
             v11._log(
                 "Planner V34: eager COLLECT handoffs enabled | "
@@ -420,7 +419,12 @@ def authority_main(args) -> int:
                 f"full quorum before {_V32._cohort_deadline_frames()}f; close partial cohort at latest useful handoff"
             )
             _AUTHORITY_RUN_SETUP_PLAN.setup_run_state(args)
-            return _V29.authority_main(args)
+            _AUTHORITY_RUN_RESET_PLAN.reset_named("v29-collect-response-cache")
+            v11._log(
+                "Planner V29: coherent delayed COLLECT enabled | "
+                "cache by generation/root/worker; wait for worker quorum before lineage + reward ranking"
+            )
+            return _V28.authority_main(args)
     finally:
         _LIVE_AUTHORITY_CORE = None
 
