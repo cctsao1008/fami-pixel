@@ -37,22 +37,30 @@ def test_v27_historical_authority_responsibility_is_two_resets_log_recorder_and_
     assert "return v26.authority_main(args)" in source
 
 
-def test_current_v35_extracts_v27_runtime_and_enters_v26_directly():
+def test_current_v35_extracts_v27_runtime_and_keeps_recorder_around_lower_authority():
     v35 = _load_v35()
     source = inspect.getsource(v35.authority_main)
 
     progress = '_AUTHORITY_RUN_RESET_PLAN.reset_named("v27-progress-response-cache")'
     ledger = '_AUTHORITY_RUN_RESET_PLAN.reset_named("v27-authority-action-ledger")'
     recorder = "authority_action_recording_layer(_V27._AUTHORITY_ACTION_LEDGER)"
-    delegate = "return v26.authority_main(args)"
+    v26_reset = '_AUTHORITY_RUN_RESET_PLAN.reset_named("v26-gap-commitment")'
+    delegate = "return v26._BASE_V25_AUTHORITY(args)"
 
-    for token in (progress, ledger, recorder, delegate):
+    for token in (progress, ledger, recorder, v26_reset, delegate):
         assert token in source
-    assert source.index(progress) < source.index(ledger) < source.index(recorder) < source.index(delegate)
+    assert (
+        source.index(progress)
+        < source.index(ledger)
+        < source.index(recorder)
+        < source.index(v26_reset)
+        < source.index(delegate)
+    )
+    assert "return v26.authority_main(args)" not in source
     assert "return _V27.authority_main(args)" not in source
 
 
-def test_v35_v27_resets_occur_inside_v28_enrichment_before_v26(monkeypatch, tmp_path):
+def test_v35_v27_resets_occur_inside_v28_enrichment_before_lower_authority(monkeypatch, tmp_path):
     v35 = _load_v35()
     calls = []
 
@@ -73,18 +81,19 @@ def test_v35_v27_resets_occur_inside_v28_enrichment_before_v26(monkeypatch, tmp_
     monkeypatch.setattr(v35, "_AUTHORITY_RUN_RESET_PLAN", ResetPlan())
 
     def delegated(_args):
-        calls.append("v26")
+        calls.append("v25")
         return 26
 
-    monkeypatch.setattr(v35.v26, "authority_main", delegated)
+    monkeypatch.setattr(v35.v26, "_BASE_V25_AUTHORITY", delegated)
 
     args = SimpleNamespace(
         step_timeout=1.0,
         checkpoint_dir=tmp_path / "checkpoints" / "live.mss",
     )
     assert v35.authority_main(args) == 26
-    assert calls[-3:] == [
+    assert calls[-4:] == [
         "v27-progress-response-cache",
         "v27-authority-action-ledger",
-        "v26",
+        "v26-gap-commitment",
+        "v25",
     ]
