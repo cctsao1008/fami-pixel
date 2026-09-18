@@ -25,11 +25,11 @@ remain above this lower COLLECT delegate, and V34's asynchronous worker/search
 machinery stays available for non-Star/fallback operation while objective routing,
 PROGRESS fallback, async COLLECT authority scan, controller instrumentation,
 V34/V33/V32/V29/V28/V27/V26/V25 run-start resets, V30 proof-horizon setup, V28
-checkpoint request enrichment, and V27 authority-action lineage recording are now
-bound through stable control composition. Historical V26/V25/V24 authority shells
-are bypassed; their run-scoped reset/log responsibilities are reproduced here
-before entering V24's captured V23 authority loop. V26's SURVIVE policy remains
-active in its selector.
+checkpoint request enrichment, V27 authority-action lineage recording, and V23
+bootstrap/setup are now bound through stable control composition. Historical
+V26/V25/V24/V23 authority wrappers are bypassed by the active path; their
+run-scoped reset/setup/log responsibilities are reproduced here before entering
+V17's live authority loop. V26's SURVIVE policy remains active in its selector.
 """
 
 from __future__ import annotations
@@ -74,7 +74,7 @@ _V29 = _V30.v29
 _V28 = _V29.v28
 _V27 = _V28.v27
 _V24 = v25.v24
-_BASE_V23_AUTHORITY = _V24._BASE_AUTHORITY_MAIN
+_V17 = v23.v17
 
 
 def _proof_horizon_for_freshness(freshness: int) -> int:
@@ -142,6 +142,53 @@ def _setup_v30_collect_runtime(args) -> int:
     return proof_horizon
 
 
+def _setup_v23_process_job(_args):
+    """Preserve V23's optional Windows supervisor-job attachment."""
+
+    if v23.os.name != "nt":
+        return None
+    try:
+        joined = bool(v23.join_windows_job_from_env())
+        if joined:
+            v11._log("Process job : authority joined supervisor kill-on-close job")
+        else:
+            v11._log("Process job : no supervisor job supplied; using Python cleanup only")
+        return joined
+    except OSError as exc:
+        v11._log(f"Process job : join failed ({exc}); using fallback cleanup")
+        return False
+
+
+def _setup_v23_surrogate_model(args) -> Path:
+    """Validate and normalize the legacy surrogate artifact exactly as V23 did."""
+
+    if args.surrogate_model is None:
+        raise SystemExit(
+            "V23 requires --surrogate-model <trained JSON artifact> for legacy telemetry/fallback compatibility"
+        )
+    model_path = args.surrogate_model.expanduser().resolve()
+    if not model_path.is_file():
+        raise SystemExit(f"surrogate model not found: {model_path}")
+    args.surrogate_model = model_path
+    return model_path
+
+
+def _setup_v23_runtime_dir(args) -> Path:
+    """Create V23's isolated authority/worker IPC directory and remap paths."""
+
+    runtime_dir = v23.isolated_run_dir(args.checkpoint_dir)
+    args.checkpoint_dir = runtime_dir
+    args.shadow_home = args.shadow_home.expanduser().resolve() / runtime_dir.name
+    return runtime_dir
+
+
+def _setup_v23_live_stack(_args) -> None:
+    """Install V20 observation/watchdog/evidence then V23 forward-model hooks."""
+
+    v23.v20._install_landing_overrides()
+    v23._install_forward_overrides()
+
+
 def _v28_checkpoint_request_enricher() -> AuthorityContinuationRequestEnricher:
     """Bind V28 continuation memory to the stable checkpoint-request seam."""
 
@@ -194,6 +241,14 @@ _AUTHORITY_RUN_RESET_PLAN = AuthorityRunResetPlan(
 _AUTHORITY_RUN_SETUP_PLAN = AuthorityRunSetupPlan(
     steps=(
         NamedRunSetup("v30-collect-proof-horizon", _setup_v30_collect_runtime),
+    )
+)
+_V23_BOOTSTRAP_SETUP_PLAN = AuthorityRunSetupPlan(
+    steps=(
+        NamedRunSetup("v23-process-job", _setup_v23_process_job),
+        NamedRunSetup("v23-surrogate-model", _setup_v23_surrogate_model),
+        NamedRunSetup("v23-runtime-dir", _setup_v23_runtime_dir),
+        NamedRunSetup("v23-live-stack", _setup_v23_live_stack),
     )
 )
 
@@ -430,8 +485,8 @@ def authority_main(args) -> int:
             # cache clear, V28 clears current-plan memory and installs request
             # enrichment, V27 clears PROGRESS/lineage state and installs the
             # authority-action recorder, V26 clears its run-scoped gap commitment,
-            # and V25 clears its sticky live objective before the historical V24
-            # log and captured V23 authority loop.
+            # V25 clears its sticky live objective, then stable V23 bootstrap
+            # setup prepares the historical V17 live authority loop.
             _AUTHORITY_RUN_RESET_PLAN.reset_through("v32-collect-response-cache")
             v11._log(
                 "Planner V34: eager COLLECT handoffs enabled | "
@@ -487,7 +542,19 @@ def authority_main(args) -> int:
                         "Planner V24: latency-tolerant forward model enabled | "
                         f"prefix={v23.EXECUTION_PREFIX_FRAMES}f partial-safe selection + tail continuation"
                     )
-                    return _BASE_V23_AUTHORITY(args)
+                    bootstrap = _V23_BOOTSTRAP_SETUP_PLAN.setup_run_state(args)
+                    runtime_dir = bootstrap["v23-runtime-dir"]
+                    v11._log(f"Runtime IPC : {runtime_dir}")
+                    v11._log(
+                        "Planner V23: live Mesen forward model enabled | "
+                        f"horizon={v23.LIVE_TRAJECTORY_HORIZON}f prefix={v23.EXECUTION_PREFIX_FRAMES}f "
+                        "HORIZON=UNKNOWN; safe resolved branches only"
+                    )
+                    v11._log(
+                        "Forward model: Mesen outcomes are final branch authority; "
+                        "async source age is recorded and only the short action prefix is rebased live"
+                    )
+                    return _V17.authority_main(args)
     finally:
         _LIVE_AUTHORITY_CORE = None
 
