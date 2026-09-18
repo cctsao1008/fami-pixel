@@ -32,7 +32,14 @@ from __future__ import annotations
 from pathlib import Path
 import time
 
-from fami_pixel.control import read_available_responses
+from fami_pixel.control import (
+    read_available_responses,
+    selected_collect_anchor_meta,
+    selected_eager_collect_meta,
+    waiting_collect_cohort_meta,
+    waiting_eager_handoff_meta,
+    waiting_lineage_collect_meta,
+)
 from fami_pixel.games.smb1.collect_delay import (
     collect_proof_rank_key,
     compose_delayed_collect_schedule,
@@ -483,26 +490,21 @@ def _best_collect_or_progress(
                 live_radar=live_radar,
                 handoff=int(handoff),
             )
-            v23._latest_forward_meta = {
-                "forward_model_status": "selected-eager-handoff-collect-proof",
-                "objective_mode": "COLLECT",
-                "collect_target_type": target_type,
-                "forward_model_generation": int(generation),
-                "forward_model_plan": result.get("candidate"),
-                "forward_model_event": result.get("trajectory_event"),
-                "forward_model_source_frame": int(root_frame),
-                "forward_model_source_age_frames": int(age),
-                "forward_model_reward_collected": result.get("reward_collected"),
-                "collect_handoff_frames": int(handoff),
-                "collect_handoff_stage_complete": bool(complete),
-                "collect_handoff_stage_closed": bool(closed),
-                "collect_handoff_workers": sorted(workers),
-                "collect_active_workers": sorted(active_workers),
-                "collect_lineage_valid_count": int(selection.valid_count),
-                "collect_lineage_rejected": dict(selection.rejected),
-                "collect_proof_remaining_frames": result.get("proof_remaining_frames"),
-                "collect_handoff_timing": handoff_timing,
-            }
+            v23._latest_forward_meta = selected_eager_collect_meta(
+                target_type=target_type,
+                generation=generation,
+                root_frame=root_frame,
+                age_frames=age,
+                result=result,
+                handoff_frames=handoff,
+                stage_complete=complete,
+                stage_closed=closed,
+                workers=workers,
+                active_workers=active_workers,
+                valid_count=selection.valid_count,
+                rejected=selection.rejected,
+                handoff_timing=handoff_timing,
+            )
             return result
         else:
             # Reward handoffs are exhausted. A continuation anchor may keep the
@@ -526,16 +528,14 @@ def _best_collect_or_progress(
                         live_radar=live_radar,
                         handoff=int(selection.proof.get("collect_handoff_frames", 0)),
                     )
-                    v23._latest_forward_meta = {
-                        "forward_model_status": "selected-collect-continuation-anchor",
-                        "objective_mode": "COLLECT",
-                        "collect_target_type": target_type,
-                        "forward_model_generation": int(generation),
-                        "forward_model_plan": result.get("candidate"),
-                        "forward_model_source_frame": int(root_frame),
-                        "forward_model_source_age_frames": int(age),
-                        "collect_handoff_timing": handoff_timing,
-                    }
+                    v23._latest_forward_meta = selected_collect_anchor_meta(
+                        target_type=target_type,
+                        generation=generation,
+                        root_frame=root_frame,
+                        age_frames=age,
+                        result=result,
+                        handoff_timing=handoff_timing,
+                    )
                     return result
             continue
 
@@ -545,38 +545,30 @@ def _best_collect_or_progress(
 
     if newest_wait is not None:
         generation, root_frame, handoff, age, workers, timing = newest_wait
-        v23._latest_forward_meta = {
-            "forward_model_status": "waiting-eager-collect-handoff",
-            "objective_mode": "COLLECT",
-            "collect_target_type": target_type,
-            "forward_model_generation": int(generation),
-            "forward_model_source_frame": int(root_frame),
-            "forward_model_source_age_frames": int(age),
-            "collect_waiting_handoff_frames": int(handoff),
-            "collect_handoff_workers": sorted(workers),
-            "collect_active_workers": sorted(active_workers),
-            "collect_handoff_timing": timing,
-        }
+        v23._latest_forward_meta = waiting_eager_handoff_meta(
+            target_type=target_type,
+            generation=generation,
+            root_frame=root_frame,
+            age_frames=age,
+            handoff_frames=handoff,
+            workers=workers,
+            active_workers=active_workers,
+            handoff_timing=timing,
+        )
     elif newest_rejection is not None:
         generation, root_frame, handoff, age, workers, selection, timing = newest_rejection
-        v23._latest_forward_meta = {
-            "forward_model_status": "waiting-lineage-valid-eager-collect-proof",
-            "objective_mode": "COLLECT",
-            "collect_target_type": target_type,
-            "forward_model_generation": int(generation),
-            "forward_model_source_frame": int(root_frame),
-            "forward_model_source_age_frames": int(age),
-            "collect_handoff_frames": int(handoff),
-            "collect_handoff_workers": sorted(workers),
-            "collect_lineage_rejected": dict(selection.rejected),
-            "collect_handoff_timing": timing,
-        }
+        v23._latest_forward_meta = waiting_lineage_collect_meta(
+            target_type=target_type,
+            generation=generation,
+            root_frame=root_frame,
+            age_frames=age,
+            handoff_frames=handoff,
+            workers=workers,
+            rejected=selection.rejected,
+            handoff_timing=timing,
+        )
     else:
-        v23._latest_forward_meta = {
-            "forward_model_status": "waiting-eager-collect-cohort",
-            "objective_mode": "COLLECT",
-            "collect_target_type": target_type,
-        }
+        v23._latest_forward_meta = waiting_collect_cohort_meta(target_type=target_type)
     return None
 
 
