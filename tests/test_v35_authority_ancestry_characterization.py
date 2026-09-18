@@ -84,9 +84,11 @@ def test_authority_wrappers_preserve_their_current_stateful_responsibilities():
     v27_source = inspect.getsource(v27.authority_main)
     assert "_PROGRESS_RESPONSE_CACHE.clear()" in v27_source
     assert "_AUTHORITY_ACTION_LEDGER.clear()" in v27_source
-    assert "base.set_nes_controller_state = recording_set_controller" in v27_source
-    assert "finally:" in v27_source
-    assert "base.set_nes_controller_state = original_set_controller" in v27_source
+    assert "with _AUTHORITY_RUNTIME_SCOPE.controller_layer(" in v27_source
+    assert "authority_action_recording_layer(_AUTHORITY_ACTION_LEDGER)" in v27_source
+    assert "base.set_nes_controller_state = recording_set_controller" not in v27_source
+    assert "base.set_nes_controller_state = original_set_controller" not in v27_source
+    assert type(v27._AUTHORITY_RUNTIME_SCOPE).__module__ == "fami_pixel.control.authority_runtime"
 
     assert "_reset_gap_commitment()" in inspect.getsource(v26.authority_main)
 
@@ -100,12 +102,13 @@ def test_authority_extraction_boundary_is_runtime_orchestration_not_policy_rewri
     assert "_COLLECT_PROGRESS_CONTROL.decide(" in inspect.getsource(v35._best_collect_or_progress)
     assert "return v34.authority_main(args)" in inspect.getsource(v35.authority_main)
 
-    # The outer V35 capture now uses the stable runtime scope while V27 still
-    # owns the historical lineage recorder.  Their runtime call ordering must
-    # remain recorder -> capture -> base until V27 is migrated separately.
+    # Both controller instrumentation layers now use the stable runtime scope.
+    # V27 still enters later in the historical ancestry, so runtime calls remain
+    # lineage recorder -> V35 live-core capture -> base setter.
     assert "capture_authority_core" in inspect.getsource(v35.authority_main)
     assert "controller_layer(capture_layer)" in inspect.getsource(v35.authority_main)
-    assert "recording_set_controller" in inspect.getsource(v27.authority_main)
+    assert "authority_action_recording_layer" in inspect.getsource(v27.authority_main)
+    assert "_AUTHORITY_RUNTIME_SCOPE.controller_layer" in inspect.getsource(v27.authority_main)
 
     # V26 remains the safety owner at the bottom of the wrapper chain; extracting
     # runtime ancestry must not move SURVIVE below COLLECT/PROGRESS.
