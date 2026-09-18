@@ -42,6 +42,12 @@ from fami_pixel.games.smb1.collect_delay import (
 from fami_pixel.games.smb1.collect_handoff_deadline import (
     HandoffDeadlineCollectResponseCache,
 )
+from fami_pixel.planning import (
+    active_worker_ids,
+    collect_anchor_proofs,
+    evaluate_handoff_stage,
+    ordered_handoffs,
+)
 
 import mesen_smb_checkpoint_planner as base
 import mesen_smb_checkpoint_planner_v11 as v11
@@ -53,7 +59,7 @@ import mesen_smb_checkpoint_planner_v28 as v28
 
 # Set the behavioral contract before importing the later wrappers.  V30/V32/V33
 # read v28.COLLECT_HANDOFF_FRAMES dynamically (and V33 derives max=12 at import).
-COLLECT_HANDOFF_FRAMES = (4, 8, 12)
+COLLECT_HANDOFF_FRAMES = ordered_handoffs((4, 8, 12))
 v28.COLLECT_HANDOFF_FRAMES = COLLECT_HANDOFF_FRAMES
 
 import mesen_smb_checkpoint_planner_v29 as v29
@@ -77,11 +83,12 @@ def _install_handoff_cache() -> HandoffDeadlineCollectResponseCache:
 
 
 def _active_collect_workers(worker_count: int) -> set[int]:
-    return {
-        worker
-        for worker in range(max(1, int(worker_count)))
-        if v30._unique_reward_chunks_for_worker(worker, worker_count)
-    }
+    return active_worker_ids(
+        worker_count,
+        has_work=lambda worker, total: bool(
+            v30._unique_reward_chunks_for_worker(worker, total)
+        ),
+    )
 
 
 def _evaluate_stage_proofs(
@@ -370,44 +377,6 @@ def shadow_worker_main(args) -> int:
             )
 
 
-def _proofs_for_handoff(cohort: list[dict], handoff: int) -> tuple[list[dict], set[int]]:
-    proofs: list[dict] = []
-    workers: set[int] = set()
-    for response in cohort:
-        raw = response.get("branch_proofs")
-        if not isinstance(raw, list):
-            continue
-        for item in raw:
-            if not isinstance(item, dict):
-                continue
-            if bool(item.get("collect_continuation_anchor", False)):
-                continue
-            try:
-                item_handoff = int(item.get("collect_handoff_frames", -1))
-                worker = int(item.get("worker", response.get("worker", -1)))
-            except (TypeError, ValueError):
-                continue
-            if item_handoff != int(handoff) or worker < 0:
-                continue
-            proofs.append(dict(item))
-            workers.add(worker)
-    return proofs, workers
-
-
-def _anchor_proofs(cohort: list[dict]) -> list[dict]:
-    anchors: list[dict] = []
-    for response in cohort:
-        raw = response.get("branch_proofs")
-        if not isinstance(raw, list):
-            continue
-        anchors.extend(
-            dict(item)
-            for item in raw
-            if isinstance(item, dict) and bool(item.get("collect_continuation_anchor", False))
-        )
-    return anchors
-
-
 def _selected_result(selection, *, current_frame: int, live_radar: dict, handoff: int) -> dict:
     result = dict(selection.proof)
     source_root = int(result["root_frame"])
@@ -465,23 +434,18 @@ def _best_collect_or_progress(
         )
 
         for handoff in COLLECT_HANDOFF_FRAMES:
-            proofs, workers = _proofs_for_handoff(cohort, int(handoff))
-            complete = active_workers.issubset(workers)
-            closed = age >= int(handoff)
+            stage = evaluate_handoff_stage(
+                cohort,
+                handoff_frames=int(handoff),
+                age_frames=age,
+                active_workers=active_workers,
+            )
+            proofs = [dict(proof) for proof in stage.proofs]
+            workers = set(stage.workers)
+            complete = bool(stage.complete)
+            closed = bool(stage.closed)
 
-            if not proofs:
-                if not closed:
-                    newest_wait = (
-                        generation,
-                        root_frame,
-                        handoff,
-                        age,
-                        workers,
-                        handoff_timing,
-                    )
-                    break
-                continue
-            if not complete and not closed:
+            if stage.waiting:
                 newest_wait = (
                     generation,
                     root_frame,
@@ -491,6 +455,8 @@ def _best_collect_or_progress(
                     handoff_timing,
                 )
                 break
+            if not stage.rankable:
+                continue
 
             selection = select_lineage_collect_proof(
                 proofs,
@@ -543,7 +509,7 @@ def _best_collect_or_progress(
         else:
             # Reward handoffs are exhausted. A continuation anchor may keep the
             # existing plan exact, but it never outranks an available reward stage.
-            anchors = _anchor_proofs(cohort)
+            anchors = collect_anchor_proofs(cohort)
             if anchors:
                 selection = select_lineage_collect_proof(
                     anchors,
