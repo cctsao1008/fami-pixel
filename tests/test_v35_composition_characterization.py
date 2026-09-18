@@ -156,8 +156,9 @@ def test_v35_authority_wrapper_uses_stable_runtime_scope_and_outer_reset_prefix(
     assert type(v35._AUTHORITY_RUNTIME_SCOPE).__module__ == "fami_pixel.control.authority_runtime"
     assert type(v35._AUTHORITY_RUN_RESET_PLAN).__module__ == "fami_pixel.control.authority_runtime"
     assert "with _AUTHORITY_RUNTIME_SCOPE.controller_layer(capture_layer):" in source
-    assert '_AUTHORITY_RUN_RESET_PLAN.reset_through("v33-deadline-cache")' in source
-    assert "return _V32.authority_main(args)" in source
+    assert '_AUTHORITY_RUN_RESET_PLAN.reset_through("v32-collect-response-cache")' in source
+    assert "return _V30.authority_main(args)" in source
+    assert "return _V32.authority_main(args)" not in source
     assert "return v34.authority_main(args)" not in source
     assert "_LIVE_AUTHORITY_CORE = None" in source
     assert "base.set_nes_controller_state = capture_authority_core" not in source
