@@ -1,6 +1,11 @@
 import pytest
 
-from fami_pixel.control import AuthorityRuntimeScope, authority_action_recording_layer
+from fami_pixel.control import (
+    AuthorityRunResetPlan,
+    AuthorityRuntimeScope,
+    NamedRunReset,
+    authority_action_recording_layer,
+)
 from fami_pixel.games.smb1.action_lineage import AuthorityActionLedger
 
 
@@ -20,6 +25,36 @@ def test_authority_runtime_scope_preserves_reset_order():
     scope.reset_run_state()
 
     assert calls == ["collect", "lineage", "gap"]
+
+
+def test_authority_run_reset_plan_preserves_named_order_and_duplicate_targets():
+    calls = []
+
+    def clear_collect():
+        calls.append("collect")
+
+    plan = AuthorityRunResetPlan(
+        steps=(
+            NamedRunReset("v32-collect", clear_collect),
+            NamedRunReset("v29-collect", clear_collect),
+            NamedRunReset("lineage", lambda: calls.append("lineage")),
+        )
+    )
+
+    assert plan.names == ("v32-collect", "v29-collect", "lineage")
+    plan.reset_run_state()
+    assert calls == ["collect", "collect", "lineage"]
+
+
+def test_authority_run_reset_plan_rejects_duplicate_step_names():
+    reset = lambda: None
+    with pytest.raises(ValueError, match="unique"):
+        AuthorityRunResetPlan(
+            steps=(
+                NamedRunReset("same", reset),
+                NamedRunReset("same", reset),
+            )
+        )
 
 
 def test_controller_layer_restores_exact_predecessor_after_error():
