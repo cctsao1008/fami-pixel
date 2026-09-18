@@ -1,6 +1,13 @@
 """Stable live-control composition helpers."""
 
 from .authority_plan import AuthorityPlanMemory
+from .collect_status import (
+    selected_collect_anchor_meta,
+    selected_eager_collect_meta,
+    waiting_collect_cohort_meta,
+    waiting_eager_handoff_meta,
+    waiting_lineage_collect_meta,
+)
 from .delegates import PlanDelegateSlot
 from .request_enrichment import (
     AuthorityContinuationRequestEnricher,
@@ -18,4 +25,9 @@ __all__ = [
     "enrich_checkpoint_request",
     "installed_checkpoint_request_enricher",
     "read_available_responses",
+    "selected_collect_anchor_meta",
+    "selected_eager_collect_meta",
+    "waiting_collect_cohort_meta",
+    "waiting_eager_handoff_meta",
+    "waiting_lineage_collect_meta",
 ]
