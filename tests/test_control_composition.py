@@ -1,7 +1,11 @@
 from pathlib import Path
 
 import fami_pixel.control.composition as composition
-from fami_pixel.control import EagerCollectControl, EagerCollectDecision
+from fami_pixel.control import (
+    CollectProgressControl,
+    EagerCollectControl,
+    EagerCollectDecision,
+)
 
 
 def test_eager_collect_control_binds_current_scan_dependencies(monkeypatch, tmp_path):
@@ -104,3 +108,89 @@ def test_eager_collect_control_never_reduces_requested_freshness(monkeypatch, tm
 
     assert decision is sentinel
     assert captured["retention_frames"] == 12
+
+
+def test_collect_progress_control_routes_no_target_to_progress_without_async_collect():
+    radar = {"camera_x": 123}
+    progress_calls = []
+
+    class FailEager:
+        def decide(self, *args, **kwargs):
+            raise AssertionError("COLLECT control must not run without a target")
+
+    def progress(response_paths, current_frame, freshness, last_generation, live_radar):
+        progress_calls.append(
+            (response_paths, current_frame, freshness, last_generation, live_radar)
+        )
+        return {"candidate": "progress-right"}
+
+    control = CollectProgressControl(
+        target_selector=lambda seen: None,
+        progress_selector=progress,
+        eager_collect=FailEager(),
+    )
+
+    assert control.target_type(radar) is None
+    decision = control.decide(
+        [Path("worker-0.json")],
+        current_frame=80,
+        freshness=12,
+        last_applied_generation=7,
+        target_type=None,
+        live_radar=radar,
+    )
+
+    assert decision.plan == {"candidate": "progress-right"}
+    assert decision.meta is None
+    assert decision.target_type is None
+    assert progress_calls == [([Path("worker-0.json")], 80, 12, 7, radar)]
+
+
+def test_collect_progress_control_routes_target_to_stable_eager_collect():
+    radar = {"collect_target_type": "mushroom"}
+    eager_calls = []
+    eager_result = EagerCollectDecision(
+        plan={"candidate": "collect_delay4_right"},
+        meta={"forward_model_status": "selected-eager-handoff-collect-proof"},
+    )
+
+    class FakeEager:
+        def decide(self, response_paths, **kwargs):
+            eager_calls.append((response_paths, kwargs))
+            return eager_result
+
+    def fail_progress(*args, **kwargs):
+        raise AssertionError("PROGRESS must not run while a COLLECT target exists")
+
+    control = CollectProgressControl(
+        target_selector=lambda seen: seen.get("collect_target_type"),
+        progress_selector=fail_progress,
+        eager_collect=FakeEager(),
+    )
+
+    target = control.target_type(radar)
+    assert target == "mushroom"
+    decision = control.decide(
+        [Path("worker-0.json")],
+        current_frame=90,
+        freshness=16,
+        last_applied_generation=8,
+        target_type=target,
+        live_radar=radar,
+    )
+
+    assert decision.plan == eager_result.plan
+    assert decision.meta == eager_result.meta
+    assert decision.target_type == "mushroom"
+    assert eager_calls == [
+        (
+            [Path("worker-0.json")],
+            {
+                "current_frame": 90,
+                "freshness": 16,
+                "last_applied_generation": 8,
+                "target_type": "mushroom",
+                "live_radar": radar,
+            },
+        )
+    ]
