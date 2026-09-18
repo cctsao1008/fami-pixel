@@ -32,6 +32,7 @@ from __future__ import annotations
 from pathlib import Path
 import time
 
+from fami_pixel.control import AuthorityRuntimeScope, authority_action_recording_layer
 from fami_pixel.games.smb1 import (
     TrajectoryEvent,
     evaluate_mesen_trajectory,
@@ -69,6 +70,10 @@ REQUIRED_PROGRESS_ANCHORS = frozenset({"fm_long_jump", "fm_brake_jump"})
 _MODEL_CACHE: dict[str, TinySurrogateMLP] = {}
 _PROGRESS_RESPONSE_CACHE: dict[tuple[int, int, str], dict] = {}
 _AUTHORITY_ACTION_LEDGER = AuthorityActionLedger(max_entries=512)
+_AUTHORITY_RUNTIME_SCOPE = AuthorityRuntimeScope(
+    get_controller_setter=lambda: base.set_nes_controller_state,
+    install_controller_setter=lambda setter: setattr(base, "set_nes_controller_state", setter),
+)
 
 
 def _surrogate_for_args(args) -> TinySurrogateMLP:
@@ -455,24 +460,16 @@ def _v27_schedule_label(candidate_name: str) -> str:
 def authority_main(args) -> int:
     _PROGRESS_RESPONSE_CACHE.clear()
     _AUTHORITY_ACTION_LEDGER.clear()
-    original_set_controller = base.set_nes_controller_state
-
-    def recording_set_controller(core, port, buttons):
-        if int(port) == 0:
-            _AUTHORITY_ACTION_LEDGER.record(int(core.frame_count()), int(buttons))
-        return original_set_controller(core, port, buttons)
-
-    base.set_nes_controller_state = recording_set_controller
     v11._log(
         "Planner V27: bounded multi-chunk PROGRESS search enabled | "
         f"depth={SEARCH_DEPTH} top-k={SEARCH_TOP_K} surrogate rank/prune -> exact Mesen; "
         "delayed proofs require action-lineage match + remaining proof lease; "
         "V26 SURVIVE + V25 COLLECT remain higher authority"
     )
-    try:
+    with _AUTHORITY_RUNTIME_SCOPE.controller_layer(
+        authority_action_recording_layer(_AUTHORITY_ACTION_LEDGER)
+    ):
         return v26.authority_main(args)
-    finally:
-        base.set_nes_controller_state = original_set_controller
 
 
 def _install_v27_overrides() -> None:
