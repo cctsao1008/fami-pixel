@@ -21,6 +21,7 @@ import subprocess
 import sys
 
 from fami_pixel.adapters.mesen import MesenCore, configure_standard_nes_controller, copy_nes_raw_frame
+from fami_pixel.control import enrich_checkpoint_request
 from fami_pixel.games.smb1 import GameEventType, derive_game_events, observation_from_state, read_smb1_state
 from fami_pixel.games.smb1.radar import read_smb1_radar
 from fami_pixel.telemetry import LiveRunArtifacts, NesWebViewer, format_radar_strip
@@ -338,8 +339,7 @@ def authority_main(args) -> int:
                 generation += 1
                 checkpoint = checkpoint_dir / f"live-{generation:06d}.mss"
                 frame, x, engine = base.save_checkpoint(core, checkpoint)
-                published = v11._atomic_json(
-                    request_path,
+                request_payload = enrich_checkpoint_request(
                     {
                         "generation": generation,
                         "checkpoint": str(checkpoint),
@@ -347,8 +347,9 @@ def authority_main(args) -> int:
                         "x": x,
                         "engine": engine,
                         "radar": live_radar_payload,
-                    },
+                    }
                 )
+                published = v11._atomic_json(request_path, request_payload)
                 if not published:
                     v11._log(
                         f"IPC backpressure: dropped planner snapshot generation={generation} "
