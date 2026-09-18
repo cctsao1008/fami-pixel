@@ -48,7 +48,7 @@ def test_sync_star_search_is_root_exact_and_restores_after_every_branch(monkeypa
 
     save_calls = []
     restore_calls = []
-    ledger = v35.v34.v27._AUTHORITY_ACTION_LEDGER
+    ledger = v35._EAGER_COLLECT_CONTROL.ledger
     ledger.clear()
     ledger.record(99, 0x82)
 
@@ -134,17 +134,20 @@ def test_sync_star_root_mismatch_never_rebases(monkeypatch, tmp_path):
     assert v35.v23._latest_forward_meta["forward_model_source_age_frames"] == 4
 
 
-def test_star_uses_sync_path_before_stable_async_collect(monkeypatch):
+def test_star_uses_sync_path_before_async_composed_control(monkeypatch):
     v35 = _load_v35()
     sentinel = {"candidate": "collect_hold_right_jump4", "root_frame": 200}
     v35._LIVE_AUTHORITY_CORE = object()
 
     monkeypatch.setattr(v35, "_sync_star_plan", lambda *args, **kwargs: dict(sentinel))
 
-    def fail_async(*args, **kwargs):
-        raise AssertionError("stable async COLLECT must not run after current-root Star proof succeeds")
+    class FailControl:
+        ledger = v35._EAGER_COLLECT_CONTROL.ledger
 
-    monkeypatch.setattr(v35, "select_eager_collect_decision", fail_async)
+        def decide(self, *args, **kwargs):
+            raise AssertionError("async COLLECT control must not run after current-root Star proof succeeds")
+
+    monkeypatch.setattr(v35, "_EAGER_COLLECT_CONTROL", FailControl())
 
     plan = v35._best_collect_or_progress(
         [],
@@ -156,27 +159,24 @@ def test_star_uses_sync_path_before_stable_async_collect(monkeypatch):
     assert plan == sentinel
 
 
-def test_non_star_uses_stable_async_collect_control(monkeypatch):
+def test_non_star_uses_stable_async_composed_control(monkeypatch):
     v35 = _load_v35()
     sentinel = {"candidate": "async-mushroom"}
     meta = {"forward_model_status": "selected-eager-handoff-collect-proof"}
-    observed = {}
-    cache = object()
+    seen = {}
 
-    monkeypatch.setattr(v35, "read_available_responses", lambda *args, **kwargs: [{"worker": 0}])
-    monkeypatch.setattr(v35.v34, "_install_handoff_cache", lambda: cache)
-    monkeypatch.setattr(v35.v34, "_active_collect_workers", lambda count: {0, 1})
-    monkeypatch.setattr(v35.v34.v30, "_proof_horizon", lambda args: 12)
+    class FakeControl:
+        ledger = v35._EAGER_COLLECT_CONTROL.ledger
 
-    def fake_select(responses, **kwargs):
-        observed["responses"] = responses
-        observed.update(kwargs)
-        return SimpleNamespace(plan=dict(sentinel), meta=dict(meta))
+        def decide(self, response_paths, **kwargs):
+            seen["response_paths"] = response_paths
+            seen.update(kwargs)
+            return SimpleNamespace(plan=dict(sentinel), meta=dict(meta))
 
-    monkeypatch.setattr(v35, "select_eager_collect_decision", fake_select)
+    monkeypatch.setattr(v35, "_EAGER_COLLECT_CONTROL", FakeControl())
 
     plan = v35._best_collect_or_progress(
-        [Path("response-0.json"), Path("response-1.json")],
+        [Path("worker-0.json")],
         300,
         16,
         -1,
@@ -184,12 +184,9 @@ def test_non_star_uses_stable_async_collect_control(monkeypatch):
     )
 
     assert plan == sentinel
+    assert seen["response_paths"] == [Path("worker-0.json")]
+    assert seen["current_frame"] == 300
+    assert seen["freshness"] == 16
+    assert seen["last_applied_generation"] == -1
+    assert seen["target_type"] == "mushroom"
     assert v35.v23._latest_forward_meta == meta
-    assert observed["responses"] == [{"worker": 0}]
-    assert observed["cache"] is cache
-    assert observed["handoff_frames"] == v35.v34.COLLECT_HANDOFF_FRAMES
-    assert observed["target_type"] == "mushroom"
-    assert observed["retention_frames"] == 16
-    assert observed["active_workers"] == {0, 1}
-    assert observed["ledger"] is v35.v34.v27._AUTHORITY_ACTION_LEDGER
-    assert observed["commit_frames"] == v35.v23.EXECUTION_PREFIX_FRAMES
