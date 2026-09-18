@@ -30,7 +30,11 @@ from __future__ import annotations
 from pathlib import Path
 import time
 
-from fami_pixel.control import AuthorityPlanMemory
+from fami_pixel.control import (
+    AuthorityContinuationRequestEnricher,
+    AuthorityPlanMemory,
+    installed_checkpoint_request_enricher,
+)
 from fami_pixel.games.smb1.action_lineage import schedule_buttons_at
 from fami_pixel.games.smb1.collect_delay import (
     DEFAULT_COLLECT_HANDOFF_FRAMES,
@@ -506,41 +510,21 @@ def _v28_schedule_label(candidate_name: str) -> str:
 
 
 def authority_main(args) -> int:
-    """Inject current-plan continuation into checkpoint requests; V27 records lineage."""
+    """Install current-plan continuation enrichment while V27 records lineage."""
 
     _AUTHORITY_PLAN_MEMORY.clear()
-    original_atomic_json = v11._atomic_json
-
-    def continuation_atomic_json(path, payload):
-        data = dict(payload)
-        if (
-            "checkpoint" in data
-            and "frame" in data
-            and "generation" in data
-            and "worker" not in data
-        ):
-            continuation = _continuation_schedule_for_frame(int(data["frame"]))
-            if continuation:
-                snapshot = _AUTHORITY_PLAN_MEMORY.snapshot
-                data["authority_continuation_schedule"] = continuation
-                data["authority_continuation_candidate"] = (
-                    None if snapshot is None else snapshot.get("candidate")
-                )
-                data["authority_continuation_root_frame"] = (
-                    None if snapshot is None else snapshot.get("root_frame")
-                )
-        return original_atomic_json(path, data)
-
-    v11._atomic_json = continuation_atomic_json
+    enricher = AuthorityContinuationRequestEnricher(
+        _AUTHORITY_PLAN_MEMORY,
+        proof_horizon=COLLECT_PROOF_HORIZON,
+        projector=schedule_window,
+    )
     v11._log(
         "Planner V28: delay-compensated COLLECT enabled | "
         f"handoffs={COLLECT_HANDOFF_FRAMES} proof-horizon={COLLECT_PROOF_HORIZON}f; "
         "branch-level reward proofs + current-plan continuation anchor + lineage lease"
     )
-    try:
+    with installed_checkpoint_request_enricher(enricher):
         return v27.authority_main(args)
-    finally:
-        v11._atomic_json = original_atomic_json
 
 
 def _install_v28_overrides() -> None:
