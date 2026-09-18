@@ -88,6 +88,23 @@ class AuthorityRunResetPlan:
         for step in self.steps:
             step.reset()
 
+    def reset_through(self, name: str) -> None:
+        """Execute the ordered prefix ending at ``name`` exactly once.
+
+        This supports incremental ownership transfer from historical wrappers to
+        a stable composition root.  The target is validated before any reset runs,
+        so a miss cannot leave a partially reset process.
+        """
+
+        target = str(name)
+        names = self.names
+        if target not in names:
+            raise KeyError(f"unknown run reset step: {target}")
+        for step in self.steps:
+            step.reset()
+            if step.name == target:
+                break
+
 
 @dataclass(frozen=True)
 class AuthorityRuntimeScope:
