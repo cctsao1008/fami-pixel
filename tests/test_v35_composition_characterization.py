@@ -91,6 +91,20 @@ def test_v35_installer_preserves_v28_authority_plan_wrapper_over_v26_survive_own
     assert v35.v26._lower_plan_delegate_explicit is True
 
 
+def test_v35_async_collect_dependencies_are_explicitly_composed():
+    v35 = _load_v35()
+    control = v35._EAGER_COLLECT_CONTROL
+
+    assert type(control).__module__ == "fami_pixel.control.composition"
+    assert control.cache_provider is v35.v34._install_handoff_cache
+    assert control.handoff_frames == tuple(v35.v34.COLLECT_HANDOFF_FRAMES)
+    assert control.active_workers is v35.v34._active_collect_workers
+    assert control.proof_selector is v35.v34.select_lineage_collect_proof
+    assert control.ledger is v35.v34.v27._AUTHORITY_ACTION_LEDGER
+    assert control.commit_frames == v35.v23.EXECUTION_PREFIX_FRAMES
+    assert control.proof_horizon_frames is v35._proof_horizon_for_freshness
+
+
 def test_v35_star_selector_is_sync_current_root_then_stable_async_collect_control():
     v35 = _load_v35()
     source = inspect.getsource(v35._best_collect_or_progress)
@@ -98,20 +112,27 @@ def test_v35_star_selector_is_sync_current_root_then_stable_async_collect_contro
     assert 'target_type == "star"' in source
     assert "_LIVE_AUTHORITY_CORE is not None" in source
     assert "_sync_star_plan(" in source
-    assert "read_available_responses(" in source
-    assert "select_eager_collect_decision(" in source
+    assert "_EAGER_COLLECT_CONTROL.decide(" in source
     assert "v23._latest_forward_meta = decision.meta" in source
     assert "return decision.plan" in source
+    assert "read_available_responses(" not in source
+    assert "select_eager_collect_decision(" not in source
+    assert "v34._install_handoff_cache(" not in source
+    assert "v34._active_collect_workers(" not in source
+    assert "v34.v30._proof_horizon(" not in source
+    assert "v34.select_lineage_collect_proof" not in source
+    assert "v34.v27._AUTHORITY_ACTION_LEDGER" not in source
     assert "return v34._best_collect_or_progress(" not in source
 
 
-def test_v35_sync_speculation_is_excluded_from_authority_action_lineage():
+def test_v35_sync_speculation_uses_composed_authority_ledger():
     v35 = _load_v35()
     source = inspect.getsource(v35._sync_star_plan)
 
-    assert "_AUTHORITY_ACTION_LEDGER" in source
+    assert "_EAGER_COLLECT_CONTROL.ledger" in source
     assert "with ledger.suspend_recording():" in source
     assert "_sync_star_plan_untracked(" in source
+    assert "v34.v27._AUTHORITY_ACTION_LEDGER" not in source
 
 
 def test_v35_authority_wrapper_delegates_to_v34_and_restores_controller_setter():
