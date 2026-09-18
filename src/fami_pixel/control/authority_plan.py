@@ -8,10 +8,10 @@ from a later frame to warm-start asynchronous counterfactual search.
 
 from __future__ import annotations
 
-from typing import Callable, Mapping, Sequence
+from typing import Callable, Mapping
 
 
-Schedule = list[dict[str, int]]
+Schedule = list[dict]
 ScheduleProjector = Callable[..., Schedule]
 
 
@@ -34,13 +34,12 @@ class AuthorityPlanMemory:
             return False
         try:
             root_frame = int(plan["root_frame"])
-            copied_schedule = [
-                {"buttons": int(segment["buttons"]), "frames": int(segment["frames"])}
-                for segment in schedule
-            ]
+            copied_schedule = [dict(segment) for segment in schedule]
+            for segment in copied_schedule:
+                int(segment["buttons"])
+                if int(segment["frames"]) <= 0:
+                    return False
         except (KeyError, TypeError, ValueError):
-            return False
-        if any(segment["frames"] <= 0 for segment in copied_schedule):
             return False
 
         self._plan = {
