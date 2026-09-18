@@ -46,9 +46,10 @@ def test_current_v35_extracts_v27_runtime_and_keeps_recorder_around_lower_author
     recorder = "authority_action_recording_layer(_V27._AUTHORITY_ACTION_LEDGER)"
     v26_reset = '_AUTHORITY_RUN_RESET_PLAN.reset_named("v26-gap-commitment")'
     v25_reset = '_AUTHORITY_RUN_RESET_PLAN.reset_named("v25-live-objective")'
-    delegate = "return _BASE_V23_AUTHORITY(args)"
+    bootstrap = "_V23_BOOTSTRAP_SETUP_PLAN.setup_run_state(args)"
+    delegate = "return _V17.authority_main(args)"
 
-    for token in (progress, ledger, recorder, v26_reset, v25_reset, delegate):
+    for token in (progress, ledger, recorder, v26_reset, v25_reset, bootstrap, delegate):
         assert token in source
     assert (
         source.index(progress)
@@ -56,14 +57,16 @@ def test_current_v35_extracts_v27_runtime_and_keeps_recorder_around_lower_author
         < source.index(recorder)
         < source.index(v26_reset)
         < source.index(v25_reset)
+        < source.index(bootstrap)
         < source.index(delegate)
     )
+    assert "return v23.authority_main(args)" not in source
     assert "return v26._BASE_V25_AUTHORITY(args)" not in source
     assert "return v26.authority_main(args)" not in source
     assert "return _V27.authority_main(args)" not in source
 
 
-def test_v35_v27_resets_occur_inside_v28_enrichment_before_lower_authority(monkeypatch, tmp_path):
+def test_v35_v27_resets_occur_inside_v28_enrichment_before_v23_bootstrap_and_v17(monkeypatch, tmp_path):
     v35 = _load_v35()
     calls = []
 
@@ -72,6 +75,14 @@ def test_v35_v27_resets_occur_inside_v28_enrichment_before_lower_authority(monke
         v35,
         "_AUTHORITY_RUN_SETUP_PLAN",
         SimpleNamespace(setup_run_state=lambda _args: None),
+    )
+    monkeypatch.setattr(
+        v35,
+        "_V23_BOOTSTRAP_SETUP_PLAN",
+        SimpleNamespace(
+            setup_run_state=lambda _args: calls.append("v23-bootstrap")
+            or {"v23-runtime-dir": Path("test-runtime")}
+        ),
     )
 
     class ResetPlan:
@@ -84,20 +95,21 @@ def test_v35_v27_resets_occur_inside_v28_enrichment_before_lower_authority(monke
     monkeypatch.setattr(v35, "_AUTHORITY_RUN_RESET_PLAN", ResetPlan())
 
     def delegated(_args):
-        calls.append("v23")
-        return 23
+        calls.append("v17")
+        return 17
 
-    monkeypatch.setattr(v35, "_BASE_V23_AUTHORITY", delegated)
+    monkeypatch.setattr(v35._V17, "authority_main", delegated)
 
     args = SimpleNamespace(
         step_timeout=1.0,
         checkpoint_dir=tmp_path / "checkpoints" / "live.mss",
     )
-    assert v35.authority_main(args) == 23
-    assert calls[-5:] == [
+    assert v35.authority_main(args) == 17
+    assert calls[-6:] == [
         "v27-progress-response-cache",
         "v27-authority-action-ledger",
         "v26-gap-commitment",
         "v25-live-objective",
-        "v23",
+        "v23-bootstrap",
+        "v17",
     ]
