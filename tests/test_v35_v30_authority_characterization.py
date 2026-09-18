@@ -63,7 +63,7 @@ def test_v30_proof_horizon_is_installed_before_v29_authority_delegate(monkeypatc
     assert calls[1] == ("delegate", 37)
 
 
-def test_current_v35_extracts_v30_setup_and_bypasses_v29_after_its_reset():
+def test_current_v35_keeps_v30_setup_before_v29_and_v28_transferred_runtime():
     v35 = _load_v35()
     source = inspect.getsource(v35.authority_main)
 
@@ -71,7 +71,9 @@ def test_current_v35_extracts_v30_setup_and_bypasses_v29_after_its_reset():
     assert v35._AUTHORITY_RUN_SETUP_PLAN.names == ("v30-collect-proof-horizon",)
     assert "_AUTHORITY_RUN_SETUP_PLAN.setup_run_state(args)" in source
     assert '_AUTHORITY_RUN_RESET_PLAN.reset_named("v29-collect-response-cache")' in source
-    assert "return _V28.authority_main(args)" in source
+    assert '_AUTHORITY_RUN_RESET_PLAN.reset_named("v28-authority-plan-memory")' in source
+    assert "return _V27.authority_main(args)" in source
+    assert "return _V28.authority_main(args)" not in source
     assert "return _V29.authority_main(args)" not in source
     assert "return _V30.authority_main(args)" not in source
 
@@ -80,7 +82,7 @@ def test_current_v35_extracts_v30_setup_and_bypasses_v29_after_its_reset():
     assert "return v29.authority_main(args)" in historical
 
 
-def test_v35_stable_v30_setup_runs_before_v29_reset_and_v28_delegate(monkeypatch, tmp_path):
+def test_v35_stable_v30_setup_runs_before_v29_v28_resets_and_v27_delegate(monkeypatch, tmp_path):
     v35 = _load_v35()
     calls = []
 
@@ -100,7 +102,7 @@ def test_v35_stable_v30_setup_runs_before_v29_reset_and_v28_delegate(monkeypatch
         calls.append(("delegate", int(v35._V28.COLLECT_PROOF_HORIZON)))
         return 29
 
-    monkeypatch.setattr(v35._V28, "authority_main", delegated)
+    monkeypatch.setattr(v35._V27, "authority_main", delegated)
 
     args = SimpleNamespace(
         step_timeout=1.0,
@@ -115,5 +117,6 @@ def test_v35_stable_v30_setup_runs_before_v29_reset_and_v28_delegate(monkeypatch
         if item[0] == "log" and "Planner V30:" in item[1]
     )
     v29_reset_index = calls.index(("v29-collect-response-cache", 41))
+    v28_reset_index = calls.index(("v28-authority-plan-memory", 41))
     delegate_index = calls.index(("delegate", 41))
-    assert v30_log_index < v29_reset_index < delegate_index
+    assert v30_log_index < v29_reset_index < v28_reset_index < delegate_index
