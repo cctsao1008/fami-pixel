@@ -8,6 +8,7 @@ from .request_enrichment import (
     enrich_checkpoint_request,
     installed_checkpoint_request_enricher,
 )
+from .response_intake import read_available_responses
 
 __all__ = [
     "AuthorityContinuationRequestEnricher",
@@ -16,4 +17,5 @@ __all__ = [
     "RequestPayloadEnricherSlot",
     "enrich_checkpoint_request",
     "installed_checkpoint_request_enricher",
+    "read_available_responses",
 ]
