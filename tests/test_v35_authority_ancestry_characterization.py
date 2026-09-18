@@ -66,9 +66,11 @@ def test_authority_wrappers_preserve_their_current_stateful_responsibilities():
     v34, v33, v32, _v30, v29, v28, v27, v26, _v25 = _authority_modules(v35)
 
     v35_source = inspect.getsource(v35.authority_main)
-    assert "base.set_nes_controller_state = capture_authority_core" in v35_source
-    assert "finally:" in v35_source
-    assert "base.set_nes_controller_state = original_set_controller" in v35_source
+    assert "with _AUTHORITY_RUNTIME_SCOPE.controller_layer(capture_layer):" in v35_source
+    assert "return v34.authority_main(args)" in v35_source
+    assert "_LIVE_AUTHORITY_CORE = None" in v35_source
+    assert "base.set_nes_controller_state = capture_authority_core" not in v35_source
+    assert type(v35._AUTHORITY_RUNTIME_SCOPE).__module__ == "fami_pixel.control.authority_runtime"
 
     assert "_install_handoff_cache().clear()" in inspect.getsource(v34.authority_main)
     assert "_install_deadline_cache().clear()" in inspect.getsource(v33.authority_main)
@@ -98,10 +100,11 @@ def test_authority_extraction_boundary_is_runtime_orchestration_not_policy_rewri
     assert "_COLLECT_PROGRESS_CONTROL.decide(" in inspect.getsource(v35._best_collect_or_progress)
     assert "return v34.authority_main(args)" in inspect.getsource(v35.authority_main)
 
-    # The next extraction must preserve both nested controller wrappers: V35
-    # captures the live core outside V27's lineage recorder, and V27 restores its
-    # own setter before control unwinds back through V35.
+    # The outer V35 capture now uses the stable runtime scope while V27 still
+    # owns the historical lineage recorder.  Their runtime call ordering must
+    # remain recorder -> capture -> base until V27 is migrated separately.
     assert "capture_authority_core" in inspect.getsource(v35.authority_main)
+    assert "controller_layer(capture_layer)" in inspect.getsource(v35.authority_main)
     assert "recording_set_controller" in inspect.getsource(v27.authority_main)
 
     # V26 remains the safety owner at the bottom of the wrapper chain; extracting
