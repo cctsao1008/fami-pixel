@@ -56,6 +56,13 @@ def _disable_outer_runtime_side_effects(monkeypatch, v35):
         "_AUTHORITY_RUN_SETUP_PLAN",
         SimpleNamespace(setup_run_state=lambda _args: None),
     )
+    monkeypatch.setattr(
+        v35,
+        "_V23_BOOTSTRAP_SETUP_PLAN",
+        SimpleNamespace(
+            setup_run_state=lambda _args: {"v23-runtime-dir": Path("test-runtime")}
+        ),
+    )
 
 
 def test_v35_authority_scope_captures_live_core_records_lineage_and_restores_predecessor(
@@ -85,7 +92,7 @@ def test_v35_authority_scope_captures_live_core_records_lineage_and_restores_pre
         assert v35._V27._AUTHORITY_ACTION_LEDGER.buttons_between(42, 43) == (0x82,)
         return 17
 
-    monkeypatch.setattr(v35, "_BASE_V23_AUTHORITY", delegated)
+    monkeypatch.setattr(v35._V17, "authority_main", delegated)
 
     assert v35.authority_main(_args(tmp_path)) == 17
     assert base_calls == [(captured["core"], 0, 0x82)]
@@ -114,7 +121,7 @@ def test_v35_authority_scope_restores_controller_and_live_core_on_delegate_error
         assert v35._V27._AUTHORITY_ACTION_LEDGER.buttons_between(77, 78) == (0x80,)
         raise RuntimeError("delegated authority failed")
 
-    monkeypatch.setattr(v35, "_BASE_V23_AUTHORITY", delegated)
+    monkeypatch.setattr(v35._V17, "authority_main", delegated)
 
     with pytest.raises(RuntimeError, match="delegated authority failed"):
         v35.authority_main(_args(tmp_path))
