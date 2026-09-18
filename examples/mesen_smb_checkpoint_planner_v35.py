@@ -21,14 +21,17 @@ ranking problem.  V35 therefore evaluates the small eight-chunk Star vocabulary
 Because the game does not advance while this micro-search runs, the selected
 proof is rooted at the actual current authority frame.  No stale rebase, delayed
 handoff, or action-lineage guess is involved.  V26 SURVIVE/gap/landing guards
-remain above this lower COLLECT delegate, and V34's asynchronous machinery stays
-available for non-Star/fallback operation.
+remain above this lower COLLECT delegate, and V34's asynchronous worker/search
+machinery stays available for non-Star/fallback operation while its authority
+scan is now delegated to stable control orchestration.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 import time
+
+from fami_pixel.control import read_available_responses, select_eager_collect_decision
 
 import mesen_smb_checkpoint_planner as base
 import mesen_smb_checkpoint_planner_v11 as v11
@@ -59,7 +62,7 @@ def _sync_star_plan_untracked(core, *, current_frame: int, live_radar: dict) -> 
     root_frame, root_x, root_engine = base.save_checkpoint(core, checkpoint)
     if int(root_frame) != int(current_frame):
         # Never invent a rebase if the captured core is not exactly the selector
-        # root.  Restore and let V34's normal asynchronous fallback handle it.
+        # root.  Restore and let the asynchronous fallback handle it.
         base.restore_checkpoint(core, checkpoint, root_frame, root_x, root_engine)
         v23._latest_forward_meta = {
             "forward_model_status": "sync-star-root-mismatch",
@@ -216,7 +219,7 @@ def _best_collect_or_progress(
     last_applied_generation: int,
     live_radar: dict,
 ):
-    """Use exact synchronous current-root MPC for Star; retain V34 otherwise."""
+    """Use synchronous Star MPC and stable async COLLECT orchestration otherwise."""
 
     target_type = v25._collect_target_from_radar(live_radar)
     if target_type == "star" and _LIVE_AUTHORITY_CORE is not None:
@@ -228,13 +231,40 @@ def _best_collect_or_progress(
         if result is not None:
             return result
 
-    return v34._best_collect_or_progress(
-        response_paths,
-        current_frame,
-        freshness,
-        last_applied_generation,
-        live_radar,
+    if target_type is None:
+        return v34.v27._best_forward_plan_partial_v27(
+            response_paths,
+            current_frame,
+            freshness,
+            last_applied_generation,
+            live_radar,
+        )
+
+    responses = read_available_responses(response_paths, reader=v11._read_json)
+    retention = max(
+        int(freshness),
+        int(
+            v34.v30._proof_horizon(
+                type("A", (), {"plan_freshness": freshness})()
+            )
+        ),
     )
+    decision = select_eager_collect_decision(
+        responses,
+        cache=v34._install_handoff_cache(),
+        handoff_frames=v34.COLLECT_HANDOFF_FRAMES,
+        current_frame=current_frame,
+        last_applied_generation=last_applied_generation,
+        target_type=target_type,
+        live_radar=live_radar,
+        retention_frames=retention,
+        active_workers=v34._active_collect_workers(len(response_paths)),
+        proof_selector=v34.select_lineage_collect_proof,
+        ledger=v34.v27._AUTHORITY_ACTION_LEDGER,
+        commit_frames=v23.EXECUTION_PREFIX_FRAMES,
+    )
+    v23._latest_forward_meta = decision.meta
+    return decision.plan
 
 
 def authority_main(args) -> int:
@@ -276,7 +306,7 @@ def _install_v35_overrides() -> None:
 
     # Preserve V26's current-scene SURVIVE/gap/landing ordering. Replace only
     # the lower COLLECT/PROGRESS delegate through the stable control seam: Star
-    # is current-root synchronous; everything else stays on the V34 async path.
+    # is current-root synchronous; async COLLECT selection is stable control.
     v26.install_lower_plan_delegate(_best_collect_or_progress)
 
     v23.PLANNER_NAME = PLANNER_NAME
