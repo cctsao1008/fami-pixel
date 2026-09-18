@@ -32,6 +32,7 @@ from __future__ import annotations
 from pathlib import Path
 import time
 
+from fami_pixel.control import read_available_responses
 from fami_pixel.games.smb1.collect_delay import (
     collect_proof_rank_key,
     compose_delayed_collect_schedule,
@@ -440,11 +441,7 @@ def _best_collect_or_progress(
             live_radar,
         )
 
-    responses: list[dict] = []
-    for path in response_paths:
-        response = v11._read_json(path)
-        if response is not None:
-            responses.append(dict(response))
+    responses = read_available_responses(response_paths, reader=v11._read_json)
 
     retention = max(int(freshness), int(v30._proof_horizon(type("A", (), {"plan_freshness": freshness})())))
     cache = _install_handoff_cache()
