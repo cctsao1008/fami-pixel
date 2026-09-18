@@ -3,12 +3,12 @@
 
 V34 restored an eager +4f asynchronous COLLECT handoff, but field evidence showed
 that no reward branch was ever admitted: the live authority advanced faster than
-active shadow workers could prove continuation(+4f) + reward(+4f).  Idle workers
+active shadow workers could prove continuation(+4f) + reward(+4f). Idle workers
 could publish coverage immediately, while every real +4f branch missed its own
 handoff and became unreachable by construction.
 
 For a transient Star, this is a fundamental scheduling problem rather than a
-ranking problem.  V35 therefore evaluates the small eight-chunk Star vocabulary
+ranking problem. V35 therefore evaluates the small eight-chunk Star vocabulary
 *synchronously on the authoritative Mesen core at the current control root*:
 
     current live root (game paused in wall-clock time)
@@ -19,13 +19,13 @@ ranking problem.  V35 therefore evaluates the small eight-chunk Star vocabulary
         -> reobserve/replan four frames later
 
 Because the game does not advance while this micro-search runs, the selected
-proof is rooted at the actual current authority frame.  No stale rebase, delayed
-handoff, or action-lineage guess is involved.  V26 SURVIVE/gap/landing guards
+proof is rooted at the actual current authority frame. No stale rebase, delayed
+handoff, or action-lineage guess is involved. V26 SURVIVE/gap/landing guards
 remain above this lower COLLECT delegate, and V34's asynchronous worker/search
 machinery stays available for non-Star/fallback operation while objective routing,
-PROGRESS fallback, async COLLECT authority scan, controller instrumentation, and
-the outer V34/V33/V32 run-start resets are now bound through stable control
-composition.
+PROGRESS fallback, async COLLECT authority scan, controller instrumentation,
+outer V34/V33/V32 run-start resets, and V30 proof-horizon setup are now bound
+through stable control composition.
 """
 
 from __future__ import annotations
@@ -35,10 +35,12 @@ import time
 
 from fami_pixel.control import (
     AuthorityRunResetPlan,
+    AuthorityRunSetupPlan,
     AuthorityRuntimeScope,
     CollectProgressControl,
     EagerCollectControl,
     NamedRunReset,
+    NamedRunSetup,
 )
 
 import mesen_smb_checkpoint_planner as base
@@ -56,7 +58,7 @@ _SYNC_STEP_TIMEOUT = 2.0
 _SYNC_CHECKPOINT = Path("build/checkpoints/v35-sync-star-current.mss")
 
 # Freeze the concrete historical authority ancestry once at the current
-# composition root.  The reset plan below mirrors the exact descent order,
+# composition root. The reset plan below mirrors the exact descent order,
 # including the duplicate V32/V29 clear of the same COLLECT response cache.
 _V33 = v34.v33
 _V32 = _V33.v32
@@ -108,6 +110,25 @@ def _reset_v26_gap_commitment() -> None:
     v26._reset_gap_commitment()
 
 
+def _setup_v30_collect_runtime(args) -> int:
+    """Install V30's run-scoped proof horizon before entering V29 authority."""
+
+    proof_horizon = int(_V30._proof_horizon(args))
+    _V28.COLLECT_PROOF_HORIZON = proof_horizon
+    budget = _V30.CollectTreeBudget(
+        chunk_count=len(v25.REWARD_BEAM_CHUNKS_WITH_HOLD),
+        handoffs=tuple(int(value) for value in _V28.COLLECT_HANDOFF_FRAMES),
+        proof_horizon=proof_horizon,
+    )
+    v11._log(
+        "Planner V30: shared-prefix delayed COLLECT enabled | "
+        f"proof-horizon={proof_horizon}f handoffs={tuple(_V28.COLLECT_HANDOFF_FRAMES)} "
+        f"budget naive={budget.naive_exact_steps}f shared={budget.shared_exact_steps}f "
+        f"saved={budget.saved_exact_steps}f"
+    )
+    return proof_horizon
+
+
 # Transitional composition roots for the current lower objective path.
 # Historical modules still provide concrete implementations, but the selector
 # below no longer discovers those dependencies through transitive module globals.
@@ -146,6 +167,11 @@ _AUTHORITY_RUN_RESET_PLAN = AuthorityRunResetPlan(
         NamedRunReset("v26-gap-commitment", _reset_v26_gap_commitment),
     )
 )
+_AUTHORITY_RUN_SETUP_PLAN = AuthorityRunSetupPlan(
+    steps=(
+        NamedRunSetup("v30-collect-proof-horizon", _setup_v30_collect_runtime),
+    )
+)
 
 
 def _sync_star_plan_untracked(core, *, current_frame: int, live_radar: dict) -> dict | None:
@@ -162,7 +188,7 @@ def _sync_star_plan_untracked(core, *, current_frame: int, live_radar: dict) -> 
     root_frame, root_x, root_engine = base.save_checkpoint(core, checkpoint)
     if int(root_frame) != int(current_frame):
         # Never invent a rebase if the captured core is not exactly the selector
-        # root.  Restore and let the asynchronous fallback handle it.
+        # root. Restore and let the asynchronous fallback handle it.
         base.restore_checkpoint(core, checkpoint, root_frame, root_x, root_engine)
         v23._latest_forward_meta = {
             "forward_model_status": "sync-star-root-mismatch",
@@ -233,7 +259,7 @@ def _sync_star_plan_untracked(core, *, current_frame: int, live_radar: dict) -> 
 
     result = {
         # This is a current-root authority-local proof, not an asynchronous worker
-        # generation.  Keeping generation=-1 prevents it from consuming unrelated
+        # generation. Keeping generation=-1 prevents it from consuming unrelated
         # shadow generations in V17's response bookkeeping.
         "generation": -1,
         "worker": "authority-sync-star",
@@ -296,9 +322,9 @@ def _sync_star_plan(core, *, current_frame: int, live_radar: dict) -> dict | Non
     """Run current-root Star speculation without mutating authority action history.
 
     V27 instruments ``base.set_nes_controller_state`` to record the final input
-    used for each real ``frame -> frame+1`` transition.  Base checkpoint helpers
+    used for each real ``frame -> frame+1`` transition. Base checkpoint helpers
     intentionally write NOOP before save/load, but V35 uses those helpers while
-    exploring counterfactual futures without advancing live authority.  Keep the
+    exploring counterfactual futures without advancing live authority. Keep the
     whole synchronous micro-search outside the ledger so speculative save/restore
     controller writes can never masquerade as authoritative history.
     """
@@ -345,7 +371,7 @@ def _best_collect_or_progress(
 
 
 def authority_main(args) -> int:
-    """Run current authority with stable outer reset and controller ownership."""
+    """Run current authority with stable outer reset/setup and controller ownership."""
 
     global _LIVE_AUTHORITY_CORE, _SYNC_STEP_TIMEOUT, _SYNC_CHECKPOINT
     _LIVE_AUTHORITY_CORE = None
@@ -364,8 +390,8 @@ def authority_main(args) -> int:
         return capture_authority_core
 
     # V27 installs its action-ledger wrapper later in the remaining historical
-    # authority chain.  It wraps the setter visible inside this stable scope, so
-    # real authority calls remain recording -> capture -> base.  V35 separately
+    # authority chain. It wraps the setter visible inside this stable scope, so
+    # real authority calls remain recording -> capture -> base. V35 separately
     # suspends ledger writes across synchronous speculative save/restore/search.
     v11._log(
         "Planner V35: synchronous current-root Star micro-MPC enabled | "
@@ -373,12 +399,12 @@ def authority_main(args) -> int:
     )
     try:
         with _AUTHORITY_RUNTIME_SCOPE.controller_layer(capture_layer):
-            # Current V35 owns the outer run-start resets through V32. Historical
-            # V34/V33/V32 runners remain untouched for standalone provenance, but
-            # the current authority path bypasses their reset/log-only wrappers
-            # and enters at V30 after performing this exact ordered prefix once.
-            # V29 still performs the second historical clear of the same COLLECT
-            # cache, preserving the V32->V29 duplicate reset contract exactly.
+            # Current V35 owns the outer run-start resets through V32 and V30's
+            # proof-horizon setup. Historical V34/V33/V32/V30 runners remain
+            # untouched for standalone provenance. The active path performs the
+            # exact reset prefix, installs the V30 runtime horizon once, and then
+            # enters V29. V29 still performs the second historical clear of the
+            # same COLLECT cache, preserving the duplicate reset contract exactly.
             _AUTHORITY_RUN_RESET_PLAN.reset_through("v32-collect-response-cache")
             v11._log(
                 "Planner V34: eager COLLECT handoffs enabled | "
@@ -393,7 +419,8 @@ def authority_main(args) -> int:
                 "Planner V32: deadline-closed COLLECT cohorts enabled | "
                 f"full quorum before {_V32._cohort_deadline_frames()}f; close partial cohort at latest useful handoff"
             )
-            return _V30.authority_main(args)
+            _AUTHORITY_RUN_SETUP_PLAN.setup_run_state(args)
+            return _V29.authority_main(args)
     finally:
         _LIVE_AUTHORITY_CORE = None
 
