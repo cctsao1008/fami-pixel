@@ -159,8 +159,10 @@ def test_v35_authority_wrapper_uses_stable_runtime_scope_reset_setup_and_lineage
     assert '_AUTHORITY_RUN_RESET_PLAN.reset_named("v27-progress-response-cache")' in source
     assert '_AUTHORITY_RUN_RESET_PLAN.reset_named("v27-authority-action-ledger")' in source
     assert "authority_action_recording_layer(_V27._AUTHORITY_ACTION_LEDGER)" in source
+    assert '_AUTHORITY_RUN_RESET_PLAN.reset_named("v26-gap-commitment")' in source
     assert source.count("_AUTHORITY_RUNTIME_SCOPE.controller_layer(") == 2
-    assert "return v26.authority_main(args)" in source
+    assert "return v26._BASE_V25_AUTHORITY(args)" in source
+    assert "return v26.authority_main(args)" not in source
     assert "return _V27.authority_main(args)" not in source
     assert "return _V28.authority_main(args)" not in source
     assert "_LIVE_AUTHORITY_CORE = None" in source
