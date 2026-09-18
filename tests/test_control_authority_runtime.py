@@ -2,8 +2,10 @@ import pytest
 
 from fami_pixel.control import (
     AuthorityRunResetPlan,
+    AuthorityRunSetupPlan,
     AuthorityRuntimeScope,
     NamedRunReset,
+    NamedRunSetup,
     authority_action_recording_layer,
 )
 from fami_pixel.games.smb1.action_lineage import AuthorityActionLedger
@@ -80,6 +82,35 @@ def test_authority_run_reset_plan_rejects_duplicate_step_names():
             steps=(
                 NamedRunReset("same", reset),
                 NamedRunReset("same", reset),
+            )
+        )
+
+
+def test_authority_run_setup_plan_preserves_order_and_returns_named_results():
+    calls = []
+    args = object()
+    plan = AuthorityRunSetupPlan(
+        steps=(
+            NamedRunSetup("proof-horizon", lambda current: calls.append(("proof", current)) or 37),
+            NamedRunSetup("other", lambda current: calls.append(("other", current)) or "ok"),
+        )
+    )
+
+    assert plan.names == ("proof-horizon", "other")
+    assert plan.setup_run_state(args) == {
+        "proof-horizon": 37,
+        "other": "ok",
+    }
+    assert calls == [("proof", args), ("other", args)]
+
+
+def test_authority_run_setup_plan_rejects_duplicate_step_names():
+    setup = lambda _args: None
+    with pytest.raises(ValueError, match="unique"):
+        AuthorityRunSetupPlan(
+            steps=(
+                NamedRunSetup("same", setup),
+                NamedRunSetup("same", setup),
             )
         )
 
