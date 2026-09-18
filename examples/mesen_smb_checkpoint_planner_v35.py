@@ -24,8 +24,8 @@ handoff, or action-lineage guess is involved. V26 SURVIVE/gap/landing guards
 remain above this lower COLLECT delegate, and V34's asynchronous worker/search
 machinery stays available for non-Star/fallback operation while objective routing,
 PROGRESS fallback, async COLLECT authority scan, controller instrumentation,
-outer V34/V33/V32/V29 run-start resets, and V30 proof-horizon setup are now bound
-through stable control composition.
+V34/V33/V32/V29/V28 run-start resets, V30 proof-horizon setup, and V28 checkpoint
+request enrichment are now bound through stable control composition.
 """
 
 from __future__ import annotations
@@ -34,6 +34,7 @@ from pathlib import Path
 import time
 
 from fami_pixel.control import (
+    AuthorityContinuationRequestEnricher,
     AuthorityRunResetPlan,
     AuthorityRunSetupPlan,
     AuthorityRuntimeScope,
@@ -41,6 +42,7 @@ from fami_pixel.control import (
     EagerCollectControl,
     NamedRunReset,
     NamedRunSetup,
+    installed_checkpoint_request_enricher,
 )
 
 import mesen_smb_checkpoint_planner as base
@@ -111,7 +113,7 @@ def _reset_v26_gap_commitment() -> None:
 
 
 def _setup_v30_collect_runtime(args) -> int:
-    """Install V30's run-scoped proof horizon before entering V29 authority."""
+    """Install V30's run-scoped proof horizon before entering lower authority."""
 
     proof_horizon = int(_V30._proof_horizon(args))
     _V28.COLLECT_PROOF_HORIZON = proof_horizon
@@ -127,6 +129,16 @@ def _setup_v30_collect_runtime(args) -> int:
         f"saved={budget.saved_exact_steps}f"
     )
     return proof_horizon
+
+
+def _v28_checkpoint_request_enricher() -> AuthorityContinuationRequestEnricher:
+    """Bind V28 continuation memory to the stable checkpoint-request seam."""
+
+    return AuthorityContinuationRequestEnricher(
+        _V28._AUTHORITY_PLAN_MEMORY,
+        proof_horizon=int(_V28.COLLECT_PROOF_HORIZON),
+        projector=_V28.schedule_window,
+    )
 
 
 # Transitional composition roots for the current lower objective path.
@@ -402,8 +414,8 @@ def authority_main(args) -> int:
             # Preserve the historical runtime order exactly while transferring
             # ownership: V32's first COLLECT-cache clear happens in the stable
             # prefix, V30 installs the proof horizon, then V29 performs the second
-            # clear through one named reset. Current V35 therefore bypasses V29
-            # without moving that reset ahead of the V30 setup.
+            # cache clear, and V28 clears current-plan memory before installing
+            # its bounded checkpoint-request enricher around V27 authority.
             _AUTHORITY_RUN_RESET_PLAN.reset_through("v32-collect-response-cache")
             v11._log(
                 "Planner V34: eager COLLECT handoffs enabled | "
@@ -424,7 +436,15 @@ def authority_main(args) -> int:
                 "Planner V29: coherent delayed COLLECT enabled | "
                 "cache by generation/root/worker; wait for worker quorum before lineage + reward ranking"
             )
-            return _V28.authority_main(args)
+            _AUTHORITY_RUN_RESET_PLAN.reset_named("v28-authority-plan-memory")
+            enricher = _v28_checkpoint_request_enricher()
+            v11._log(
+                "Planner V28: delay-compensated COLLECT enabled | "
+                f"handoffs={_V28.COLLECT_HANDOFF_FRAMES} proof-horizon={_V28.COLLECT_PROOF_HORIZON}f; "
+                "branch-level reward proofs + current-plan continuation anchor + lineage lease"
+            )
+            with installed_checkpoint_request_enricher(enricher):
+                return _V27.authority_main(args)
     finally:
         _LIVE_AUTHORITY_CORE = None
 
