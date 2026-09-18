@@ -48,7 +48,9 @@ def test_current_v35_extracts_v28_runtime_and_keeps_scope_around_lower_authority
     assert '_AUTHORITY_RUN_RESET_PLAN.reset_named("v28-authority-plan-memory")' in source
     assert "enricher = _v28_checkpoint_request_enricher()" in source
     assert "with installed_checkpoint_request_enricher(enricher):" in source
-    assert "return _BASE_V23_AUTHORITY(args)" in source
+    assert "_V23_BOOTSTRAP_SETUP_PLAN.setup_run_state(args)" in source
+    assert "return _V17.authority_main(args)" in source
+    assert "return v23.authority_main(args)" not in source
     assert "return v26._BASE_V25_AUTHORITY(args)" not in source
     assert "return v26.authority_main(args)" not in source
     assert "return _V27.authority_main(args)" not in source
@@ -91,6 +93,13 @@ def test_v35_v28_enricher_scope_is_bounded_and_uses_same_authority_plan_memory(
         "_AUTHORITY_RUN_SETUP_PLAN",
         SimpleNamespace(setup_run_state=lambda _args: None),
     )
+    monkeypatch.setattr(
+        v35,
+        "_V23_BOOTSTRAP_SETUP_PLAN",
+        SimpleNamespace(
+            setup_run_state=lambda _args: {"v23-runtime-dir": Path("test-runtime")}
+        ),
+    )
     monkeypatch.setattr(v35.v11, "_log", lambda *_args, **_kwargs: None)
 
     observed = {}
@@ -108,7 +117,7 @@ def test_v35_v28_enricher_scope_is_bounded_and_uses_same_authority_plan_memory(
         observed.update(enrich_checkpoint_request({"frame": 100, "generation": 7}))
         return 28
 
-    monkeypatch.setattr(v35, "_BASE_V23_AUTHORITY", delegated)
+    monkeypatch.setattr(v35._V17, "authority_main", delegated)
 
     args = SimpleNamespace(
         step_timeout=1.0,
