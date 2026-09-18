@@ -2,6 +2,7 @@ from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 import inspect
 import sys
+from types import SimpleNamespace
 
 
 def _load_v35():
@@ -42,7 +43,7 @@ def test_v23_authority_is_bootstrap_setup_then_v17_delegate_not_the_live_loop():
     assert '"Planner V23: live Mesen forward model enabled | "' in source
     assert "return v17.authority_main(args)" in source
 
-    # V23 itself does not own the per-frame authority loop.
+    # Historical V23 itself does not own the per-frame authority loop.
     assert "for loop_index in range(args.max_frames):" not in source
     assert "_spawn_shadow_workers(args" not in source
     assert "base.save_checkpoint(core" not in source
@@ -64,10 +65,71 @@ def test_v17_is_the_actual_live_authority_loop_boundary_below_v23():
     assert "worker.wait(timeout=0.5)" in source
 
 
-def test_current_v35_boundary_still_enters_captured_v23_bootstrap_before_live_loop():
+def test_current_v35_extracts_v23_bootstrap_and_enters_v17_live_loop_directly():
     v35 = _load_v35()
     source = inspect.getsource(v35.authority_main)
 
-    assert v35._BASE_V23_AUTHORITY is v35.v23.authority_main
-    assert "return _BASE_V23_AUTHORITY(args)" in source
-    assert "return v23.v17.authority_main(args)" not in source
+    assert type(v35._V23_BOOTSTRAP_SETUP_PLAN).__module__ == "fami_pixel.control.authority_runtime"
+    assert v35._V23_BOOTSTRAP_SETUP_PLAN.names == (
+        "v23-process-job",
+        "v23-surrogate-model",
+        "v23-runtime-dir",
+        "v23-live-stack",
+    )
+    assert "bootstrap = _V23_BOOTSTRAP_SETUP_PLAN.setup_run_state(args)" in source
+    assert 'runtime_dir = bootstrap["v23-runtime-dir"]' in source
+    assert 'v11._log(f"Runtime IPC : {runtime_dir}")' in source
+    assert '"Planner V23: live Mesen forward model enabled | "' in source
+    assert "return _V17.authority_main(args)" in source
+    assert "return _BASE_V23_AUTHORITY(args)" not in source
+    assert "return v23.authority_main(args)" not in source
+    assert v35._V17 is v35.v23.v17
+
+
+def test_v23_bootstrap_plan_preserves_path_setup_and_install_order(monkeypatch, tmp_path):
+    v35 = _load_v35()
+    calls = []
+
+    model = tmp_path / "surrogate.json"
+    model.write_text("{}", encoding="utf-8")
+    original_checkpoint = tmp_path / "checkpoints"
+    original_shadow_home = tmp_path / "shadow-home"
+    runtime_dir = tmp_path / "isolated-run"
+
+    monkeypatch.setattr(
+        v35.v23,
+        "isolated_run_dir",
+        lambda path: calls.append(("runtime-dir", path)) or runtime_dir,
+    )
+    monkeypatch.setattr(
+        v35.v23.v20,
+        "_install_landing_overrides",
+        lambda: calls.append(("install", "landing")),
+    )
+    monkeypatch.setattr(
+        v35.v23,
+        "_install_forward_overrides",
+        lambda: calls.append(("install", "forward")),
+    )
+    monkeypatch.setattr(v35.v11, "_log", lambda *_args, **_kwargs: None)
+    if v35.v23.os.name == "nt":
+        monkeypatch.setattr(v35.v23, "join_windows_job_from_env", lambda: True)
+
+    args = SimpleNamespace(
+        surrogate_model=model,
+        checkpoint_dir=original_checkpoint,
+        shadow_home=original_shadow_home,
+    )
+    results = v35._V23_BOOTSTRAP_SETUP_PLAN.setup_run_state(args)
+
+    assert tuple(results) == v35._V23_BOOTSTRAP_SETUP_PLAN.names
+    assert results["v23-surrogate-model"] == model.resolve()
+    assert results["v23-runtime-dir"] == runtime_dir
+    assert args.surrogate_model == model.resolve()
+    assert args.checkpoint_dir == runtime_dir
+    assert args.shadow_home == original_shadow_home.resolve() / runtime_dir.name
+    assert calls == [
+        ("runtime-dir", original_checkpoint),
+        ("install", "landing"),
+        ("install", "forward"),
+    ]
