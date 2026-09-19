@@ -52,7 +52,15 @@ from fami_pixel.control import (
     authority_action_recording_layer,
     installed_checkpoint_request_enricher,
 )
-from fami_pixel.planning import collect_target_from_radar
+from fami_pixel.games.smb1.collect_delay import select_lineage_collect_proof
+from fami_pixel.games.smb1.collect_handoff_deadline import (
+    HandoffDeadlineCollectResponseCache,
+)
+from fami_pixel.planning import (
+    active_worker_ids,
+    collect_target_from_radar,
+    shard_unique_items,
+)
 
 import mesen_smb_checkpoint_planner as base
 import mesen_smb_checkpoint_planner_v11 as v11
@@ -80,6 +88,11 @@ _V27 = _V28.v27
 _V24 = v25.v24
 _V17 = v23.v17
 
+_COLLECT_HANDOFF_FRAMES = tuple(int(value) for value in v34.COLLECT_HANDOFF_FRAMES)
+_COLLECT_RESPONSE_CACHE = HandoffDeadlineCollectResponseCache(
+    deadline_frames=max(_COLLECT_HANDOFF_FRAMES)
+)
+
 
 def _proof_horizon_for_freshness(freshness: int) -> int:
     """Compatibility adapter for the historical proof-horizon implementation."""
@@ -91,20 +104,41 @@ def _proof_horizon_for_freshness(freshness: int) -> int:
     )
 
 
+def _collect_response_cache() -> HandoffDeadlineCollectResponseCache:
+    return _COLLECT_RESPONSE_CACHE
+
+
+def _collect_chunks_for_worker(worker_index: int, worker_count: int):
+    return shard_unique_items(
+        v25.REWARD_BEAM_CHUNKS_WITH_HOLD,
+        worker_index=int(worker_index),
+        worker_count=int(worker_count),
+    )
+
+
+def _active_collect_workers(worker_count: int) -> set[int]:
+    return active_worker_ids(
+        worker_count,
+        has_work=lambda worker, total: bool(
+            _collect_chunks_for_worker(worker, total)
+        ),
+    )
+
+
 def _reset_v34_handoff_cache() -> None:
-    v34._install_handoff_cache().clear()
+    _COLLECT_RESPONSE_CACHE.clear()
 
 
 def _reset_v33_deadline_cache() -> None:
-    _V33._install_deadline_cache().clear()
+    _COLLECT_RESPONSE_CACHE.clear()
 
 
 def _reset_v32_collect_response_cache() -> None:
-    _V29._COLLECT_RESPONSE_CACHE.clear()
+    _COLLECT_RESPONSE_CACHE.clear()
 
 
 def _reset_v29_collect_response_cache() -> None:
-    _V29._COLLECT_RESPONSE_CACHE.clear()
+    _COLLECT_RESPONSE_CACHE.clear()
 
 
 def _reset_v28_authority_plan_memory() -> None:
@@ -269,16 +303,16 @@ def _v28_checkpoint_request_enricher() -> AuthorityContinuationRequestEnricher:
 
 
 # Transitional composition roots for the current lower objective path. Historical
-# COLLECT providers and the V27 action ledger remain injected explicitly while
-# target detection, PROGRESS cache/lineage/cohort policy, and eager-COLLECT
-# orchestration are stable.
+# reward vocabulary and the V27 action ledger remain injected explicitly while
+# COLLECT cache/admission/lineage selection, target detection, and PROGRESS
+# cache/lineage/cohort policy are stable.
 _EAGER_COLLECT_CONTROL = EagerCollectControl(
     response_reader=v11._read_json,
-    cache_provider=v34._install_handoff_cache,
-    handoff_frames=tuple(v34.COLLECT_HANDOFF_FRAMES),
-    active_workers=v34._active_collect_workers,
-    proof_selector=v34.select_lineage_collect_proof,
-    ledger=v34.v27._AUTHORITY_ACTION_LEDGER,
+    cache_provider=_collect_response_cache,
+    handoff_frames=_COLLECT_HANDOFF_FRAMES,
+    active_workers=_active_collect_workers,
+    proof_selector=select_lineage_collect_proof,
+    ledger=_V27._AUTHORITY_ACTION_LEDGER,
     proof_horizon_frames=_proof_horizon_for_freshness,
     commit_frames=v23.EXECUTION_PREFIX_FRAMES,
 )
