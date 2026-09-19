@@ -25,6 +25,7 @@ from .composition import (
 )
 from .delegates import PlanDelegateSlot
 from .eager_collect import EagerCollectDecision, select_eager_collect_decision
+from .progress import ProgressResponseCache
 from .request_enrichment import (
     AuthorityContinuationRequestEnricher,
     RequestPayloadEnricherSlot,
@@ -48,6 +49,7 @@ __all__ = [
     "NamedRunSetup",
     "PlanDelegateSlot",
     "ProgressControl",
+    "ProgressResponseCache",
     "RequestPayloadEnricherSlot",
     "authority_action_recording_layer",
     "enrich_checkpoint_request",
