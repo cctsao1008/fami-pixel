@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
 """Validate and benchmark the sequential native Mesen speculative runner v0.
 
-This probe compares the existing debugger-authoritative one-frame path against a
-separate native speculative Emulator that restores an in-memory root and calls
-IConsole::RunFrame() directly. It is intentionally narrow:
+This probe compares the existing debugger-authoritative PPU-frame stepping path
+against a separate native speculative Emulator. The speculative side runs each
+variable-input schedule continuously and captures witnesses at the exact same
+fixed PPU-period boundaries used by Debugger::Step(StepType::PpuFrame).
 
-- whole 2 KiB NES internal RAM equality after every frame;
+This distinction matters: NesConsole::RunFrame() stops when the PPU frame count
+changes, which is not equivalent to advancing one full PPU-frame period from an
+arbitrary current phase.
+
+The gate is intentionally narrow:
+
+- whole 2 KiB NES internal RAM equality after every authoritative boundary;
 - controller-byte and frame-count equality;
-- two representative 4-frame input schedules;
-- a sequential 8 x 4-frame shaped timing probe with a RAM witness per frame.
+- two representative 4-frame variable-input schedules;
+- a sequential 8 x 4-frame shaped timing probe with native per-frame witnesses.
 
 The speculative exports are probe/feature ABI from cctsao1008/MesenCE and are
 not part of the normal fami-pixel adapter yet.
@@ -35,6 +42,7 @@ from fami_pixel.adapters.mesen import (
 
 EMULATION_FLAG_MAXIMUM_SPEED = 0x04
 DEFAULT_SLOT = 9
+NES_INTERNAL_RAM_SIZE = 0x800
 
 # Representative exact 4-frame schedules used for equivalence.
 EQUIVALENCE_SCHEDULES: dict[str, tuple[int, ...]] = {
@@ -44,7 +52,7 @@ EQUIVALENCE_SCHEDULES: dict[str, tuple[int, ...]] = {
 
 # Cardinality/duration-shaped 8 x 4f workload for sequential timing. These are
 # not claimed to be the full runtime candidate generator; the purpose here is
-# to measure the native reset/run/witness floor before integrating policy code.
+# to measure the native reset/schedule/witness floor before integrating policy.
 BENCH_SCHEDULES: tuple[tuple[int, ...], ...] = (
     (0x82, 0x82, 0x82, 0x82),
     (0x83, 0x83, 0x83, 0x83),
@@ -121,6 +129,7 @@ class SpecApi:
             "FamiPixelSpecResetToRoot",
             "FamiPixelSpecSetNesControllerState",
             "FamiPixelSpecRunFrames",
+            "FamiPixelSpecRunSchedule",
             "FamiPixelSpecGetNesControllerState",
             "FamiPixelSpecReadNesInternalRam",
             "FamiPixelSpecGetFrameCount",
@@ -153,6 +162,20 @@ class SpecApi:
         self._run = dll.FamiPixelSpecRunFrames
         self._run.argtypes = [ctypes.c_uint32]
         self._run.restype = ctypes.c_int32
+
+        self._run_schedule = dll.FamiPixelSpecRunSchedule
+        self._run_schedule.argtypes = [
+            ctypes.c_uint32,
+            ctypes.POINTER(ctypes.c_uint8),
+            ctypes.c_uint32,
+            ctypes.POINTER(ctypes.c_uint8),
+            ctypes.c_uint32,
+            ctypes.POINTER(ctypes.c_uint8),
+            ctypes.c_uint32,
+            ctypes.POINTER(ctypes.c_uint32),
+            ctypes.c_uint32,
+        ]
+        self._run_schedule.restype = ctypes.c_int32
 
         self._get_controller = dll.FamiPixelSpecGetNesControllerState
         self._get_controller.argtypes = [ctypes.c_uint32]
@@ -195,7 +218,52 @@ class SpecApi:
         )
 
     def run_frames(self, count: int = 1) -> None:
+        """Run to PPU frame-count edges; diagnostic only, not exact PpuFrame semantics."""
         self._check("FamiPixelSpecRunFrames", self._run(int(count)))
+
+    def run_schedule(
+        self, schedule: tuple[int, ...], port: int = 0
+    ) -> list[dict[str, int | bytes]]:
+        if not schedule:
+            raise ValueError("schedule must contain at least one frame")
+        if not 0 <= port <= 1:
+            raise ValueError("NES controller port must be 0 or 1")
+        if any(not 0 <= int(buttons) <= 0xFF for buttons in schedule):
+            raise ValueError("all NES controller states must fit in one byte")
+
+        count = len(schedule)
+        buttons_buf = (ctypes.c_uint8 * count)(*(int(v) for v in schedule))
+        ram_buf = (ctypes.c_uint8 * (count * NES_INTERNAL_RAM_SIZE))()
+        controller_buf = (ctypes.c_uint8 * count)()
+        frame_count_buf = (ctypes.c_uint32 * count)()
+
+        status = int(
+            self._run_schedule(
+                int(port),
+                buttons_buf,
+                int(count),
+                ram_buf,
+                int(len(ram_buf)),
+                controller_buf,
+                int(len(controller_buf)),
+                frame_count_buf,
+                int(len(frame_count_buf)),
+            )
+        )
+        self._check("FamiPixelSpecRunSchedule", status)
+
+        rows: list[dict[str, int | bytes]] = []
+        for index in range(count):
+            start = index * NES_INTERNAL_RAM_SIZE
+            end = start + NES_INTERNAL_RAM_SIZE
+            rows.append(
+                {
+                    "ram": bytes(ram_buf[start:end]),
+                    "controller": int(controller_buf[index]),
+                    "frame_count": int(frame_count_buf[index]),
+                }
+            )
+        return rows
 
     def controller(self, port: int = 0) -> int:
         value = int(self._get_controller(int(port)))
@@ -204,7 +272,7 @@ class SpecApi:
         return value
 
     def ram(self) -> bytes:
-        buf = (ctypes.c_uint8 * 0x800)()
+        buf = (ctypes.c_uint8 * NES_INTERNAL_RAM_SIZE)()
         self._check(
             "FamiPixelSpecReadNesInternalRam",
             self._read_ram(0, buf, len(buf)),
@@ -239,36 +307,49 @@ def _equivalence_case(
     core.load_state_slot(int(slot))
     spec.reset_to_root()
 
-    frames: list[dict] = []
-    for index, buttons in enumerate(schedule, start=1):
+    live_rows: list[dict[str, int | bytes]] = []
+    for buttons in schedule:
         set_nes_controller_state(core, 0, int(buttons))
         core.step_frame_sync(1, timeout_ms=timeout_ms)
-        live_ram = read_nes_internal_ram(core)
-        live_controller = get_nes_controller_state(core, 0)
-        live_frame_count = core.frame_count()
+        live_rows.append(
+            {
+                "ram": read_nes_internal_ram(core),
+                "controller": int(get_nes_controller_state(core, 0)),
+                "frame_count": int(core.frame_count()),
+            }
+        )
 
-        spec.set_buttons(int(buttons), 0)
-        spec.run_frames(1)
-        spec_ram = spec.ram()
-        spec_controller = spec.controller(0)
-        spec_frame_count = spec.frame_count()
+    # The speculative schedule stays continuous across all four exact PPU-frame
+    # boundaries. This is required because a debugger PPU-frame boundary may be
+    # inside a CPU instruction; returning/serializing there would lose call-stack
+    # micro-position. The native listener captures the witness and resumes in the
+    # same C++ call stack before the next period.
+    spec_rows = spec.run_schedule(schedule, port=0)
 
+    frames: list[dict] = []
+    for index, (buttons, live, native) in enumerate(
+        zip(schedule, live_rows, spec_rows), start=1
+    ):
+        live_ram = live["ram"]
+        spec_ram = native["ram"]
+        assert isinstance(live_ram, bytes)
+        assert isinstance(spec_ram, bytes)
         ram_diff = _first_difference(live_ram, spec_ram)
         row = {
             "frame": index,
             "buttons": int(buttons),
-            "live_frame_count": int(live_frame_count),
-            "spec_frame_count": int(spec_frame_count),
-            "live_controller": int(live_controller),
-            "spec_controller": int(spec_controller),
+            "live_frame_count": int(live["frame_count"]),
+            "spec_frame_count": int(native["frame_count"]),
+            "live_controller": int(live["controller"]),
+            "spec_controller": int(native["controller"]),
             "ram_equal": ram_diff is None,
             "ram_first_difference": ram_diff,
         }
         frames.append(row)
         if (
             ram_diff is not None
-            or live_controller != spec_controller
-            or live_frame_count != spec_frame_count
+            or int(live["controller"]) != int(native["controller"])
+            or int(live["frame_count"]) != int(native["frame_count"])
         ):
             return {"name": name, "pass": False, "frames": frames}
 
@@ -278,44 +359,36 @@ def _equivalence_case(
 def _benchmark_8x4(spec: SpecApi, samples: int) -> dict:
     totals: list[int] = []
     reset_totals: list[int] = []
-    run_totals: list[int] = []
-    witness_totals: list[int] = []
+    schedule_totals: list[int] = []
 
     for _ in range(samples):
         t_decision0 = time.perf_counter_ns()
         reset_ns = 0
-        run_ns = 0
-        witness_ns = 0
+        schedule_ns = 0
         for schedule in BENCH_SCHEDULES:
             t0 = time.perf_counter_ns()
             spec.reset_to_root()
             t1 = time.perf_counter_ns()
             reset_ns += t1 - t0
 
-            for buttons in schedule:
-                spec.set_buttons(buttons)
-                t2 = time.perf_counter_ns()
-                spec.run_frames(1)
-                t3 = time.perf_counter_ns()
-                run_ns += t3 - t2
-
-                t4 = time.perf_counter_ns()
-                spec.ram()
-                t5 = time.perf_counter_ns()
-                witness_ns += t5 - t4
+            t2 = time.perf_counter_ns()
+            spec.run_schedule(schedule)
+            t3 = time.perf_counter_ns()
+            schedule_ns += t3 - t2
 
         t_decision1 = time.perf_counter_ns()
         totals.append(t_decision1 - t_decision0)
         reset_totals.append(reset_ns)
-        run_totals.append(run_ns)
-        witness_totals.append(witness_ns)
+        schedule_totals.append(schedule_ns)
 
     return {
-        "shape": "8x4f sequential; root reset per candidate; 2KiB RAM witness per frame",
+        "shape": (
+            "8x4f sequential; root reset per candidate; one continuous exact "
+            "PPU-period schedule call with 2KiB RAM/controller/frame witness per frame"
+        ),
         "decision_total": _summary_ms(totals),
         "root_reset_total": _summary_ms(reset_totals),
-        "direct_runframe_total": _summary_ms(run_totals),
-        "ram_witness_total": _summary_ms(witness_totals),
+        "native_schedule_witness_total": _summary_ms(schedule_totals),
     }
 
 
@@ -361,8 +434,9 @@ def run(args: argparse.Namespace) -> dict:
         benchmark = _benchmark_8x4(spec, int(args.samples)) if equivalence_pass else None
 
         payload = {
-            "schema": 1,
+            "schema": 2,
             "probe": "mesen-native-spec-runner-v0",
+            "boundary_semantics": "Debugger::Step(StepType::PpuFrame) fixed PPU period",
             "mesen": {
                 "dll": str(Path(args.dll).expanduser().resolve()),
                 "version": int(core.version()),
@@ -406,20 +480,19 @@ def print_report(payload: dict, output: Path) -> None:
         status = "PASS" if case["pass"] else "FAIL"
         print(f"  {case['name']}: {status}")
         if not case["pass"]:
-            print(f"    last frame: {case['frames'][-1]}")
+            print(f"    first failing frame: {case['frames'][-1]}")
 
     bench = payload.get("benchmark")
     if bench is not None:
-        print("\n8 x 4f sequential native speculative benchmark")
+        print("\n8 x 4f sequential native exact-boundary benchmark")
         for key in (
             "decision_total",
             "root_reset_total",
-            "direct_runframe_total",
-            "ram_witness_total",
+            "native_schedule_witness_total",
         ):
             row = bench[key]
             print(
-                f"  {key:24s} "
+                f"  {key:30s} "
                 f"p50={row['p50_ms']:.3f} ms  "
                 f"p95={row['p95_ms']:.3f} ms  "
                 f"p99={row['p99_ms']:.3f} ms"
