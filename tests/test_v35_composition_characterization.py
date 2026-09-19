@@ -103,7 +103,8 @@ def test_v35_collect_progress_dependencies_are_explicitly_composed():
     control = v35._COLLECT_PROGRESS_CONTROL
 
     assert type(control).__module__ == "fami_pixel.control.composition"
-    assert control.target_selector is v35.v25._collect_target_from_radar
+    assert control.target_selector is v35.collect_target_from_radar
+    assert type(control.target_selector).__module__ == "fami_pixel.planning.collect_target"
     assert control.progress_selector is v35.v34.v27._best_forward_plan_partial_v27
     assert control.eager_collect is v35._EAGER_COLLECT_CONTROL
 
@@ -170,7 +171,9 @@ def test_v35_authority_wrapper_uses_stable_runtime_scope_reset_setup_bootstrap_a
     assert '_AUTHORITY_RUN_RESET_PLAN.reset_named("v25-live-objective")' in source
     assert "_V23_BOOTSTRAP_SETUP_PLAN.setup_run_state(args)" in source
     assert source.count("_AUTHORITY_RUNTIME_SCOPE.controller_layer(") == 2
-    assert "return _V17.authority_main(args)" in source
+    assert "live_control = _build_live_authority_control()" in source
+    assert "return live_control.run(args)" in source
+    assert "return _V17.authority_main(args)" not in source
     assert "return v23.authority_main(args)" not in source
     assert "return v26._BASE_V25_AUTHORITY(args)" not in source
     assert "return v26.authority_main(args)" not in source
