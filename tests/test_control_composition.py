@@ -5,7 +5,9 @@ from fami_pixel.control import (
     CollectProgressControl,
     EagerCollectControl,
     EagerCollectDecision,
+    ProgressControl,
 )
+from fami_pixel.planning import ProgressSelection
 
 
 def test_eager_collect_control_binds_current_scan_dependencies(monkeypatch, tmp_path):
@@ -110,23 +112,82 @@ def test_eager_collect_control_never_reduces_requested_freshness(monkeypatch, tm
     assert captured["retention_frames"] == 12
 
 
-def test_collect_progress_control_routes_no_target_to_progress_without_async_collect():
+def test_progress_control_binds_cache_groups_and_stable_selector(monkeypatch):
+    paths = [Path("worker-0.json")]
+    groups = {(7, 120): [{"candidate": "run", "root_frame": 120}]}
+    cache_calls = []
+    captured = {}
+    sentinel = ProgressSelection(
+        plan={"candidate": "run"},
+        meta={"forward_model_status": "selected-lineage-cohort"},
+    )
+
+    def fake_select(seen_groups, **kwargs):
+        captured["groups"] = seen_groups
+        captured.update(kwargs)
+        return sentinel
+
+    monkeypatch.setattr(composition, "select_progress_proof", fake_select)
+
+    anchors = lambda proofs: {"run"}
+    lineage = lambda proofs, **kwargs: (proofs, {})
+    control = ProgressControl(
+        cache_responses=lambda seen_paths, **kwargs: cache_calls.append(
+            (seen_paths, kwargs)
+        ),
+        groups_provider=lambda: groups,
+        required_anchors=frozenset({"run"}),
+        evaluated_anchors=anchors,
+        lineage_validator=lineage,
+    )
+
+    decision = control.decide(
+        paths,
+        current_frame=124,
+        freshness=16,
+        last_applied_generation=5,
+        live_radar={"camera_x": 10},
+    )
+
+    assert decision is sentinel
+    assert cache_calls == [
+        (
+            paths,
+            {
+                "current_frame": 124,
+                "freshness": 16,
+                "last_applied_generation": 5,
+            },
+        )
+    ]
+    assert captured["groups"] is groups
+    assert captured["current_frame"] == 124
+    assert captured["required_anchors"] == frozenset({"run"})
+    assert captured["evaluated_anchors"] is anchors
+    assert captured["lineage_validator"] is lineage
+    assert captured["live_radar"] == {"camera_x": 10}
+
+
+def test_collect_progress_control_routes_no_target_to_stable_progress():
     radar = {"camera_x": 123}
     progress_calls = []
+    progress_result = ProgressSelection(
+        plan={"candidate": "progress-right"},
+        meta={"forward_model_status": "selected-lineage-cohort"},
+    )
 
     class FailEager:
         def decide(self, *args, **kwargs):
             raise AssertionError("COLLECT control must not run without a target")
 
-    def progress(response_paths, current_frame, freshness, last_generation, live_radar):
-        progress_calls.append(
-            (response_paths, current_frame, freshness, last_generation, live_radar)
-        )
-        return {"candidate": "progress-right"}
+    class FakeProgress:
+        def decide(self, response_paths, **kwargs):
+            progress_calls.append((response_paths, kwargs))
+            return progress_result
 
     control = CollectProgressControl(
         target_selector=lambda seen: None,
-        progress_selector=progress,
+        progress=FakeProgress(),
         eager_collect=FailEager(),
     )
 
@@ -141,9 +202,19 @@ def test_collect_progress_control_routes_no_target_to_progress_without_async_col
     )
 
     assert decision.plan == {"candidate": "progress-right"}
-    assert decision.meta is None
+    assert decision.meta == progress_result.meta
     assert decision.target_type is None
-    assert progress_calls == [([Path("worker-0.json")], 80, 12, 7, radar)]
+    assert progress_calls == [
+        (
+            [Path("worker-0.json")],
+            {
+                "current_frame": 80,
+                "freshness": 12,
+                "last_applied_generation": 7,
+                "live_radar": radar,
+            },
+        )
+    ]
 
 
 def test_collect_progress_control_routes_target_to_stable_eager_collect():
@@ -159,12 +230,13 @@ def test_collect_progress_control_routes_target_to_stable_eager_collect():
             eager_calls.append((response_paths, kwargs))
             return eager_result
 
-    def fail_progress(*args, **kwargs):
-        raise AssertionError("PROGRESS must not run while a COLLECT target exists")
+    class FailProgress:
+        def decide(self, *args, **kwargs):
+            raise AssertionError("PROGRESS must not run while a COLLECT target exists")
 
     control = CollectProgressControl(
         target_selector=lambda seen: seen.get("collect_target_type"),
-        progress_selector=fail_progress,
+        progress=FailProgress(),
         eager_collect=FakeEager(),
     )
 
