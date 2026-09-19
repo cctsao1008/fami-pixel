@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inspect the MesenCore.dll ABI needed by fami-pixel M0."""
+"""Inspect the MesenCore.dll ABI needed by fami-pixel probes."""
 
 from __future__ import annotations
 
@@ -11,12 +11,34 @@ from fami_pixel.adapters.mesen import MesenCore, MesenLoadError
 from fami_pixel.adapters.mesen.loader import M0_EXPORTS
 
 
+SPEC_RUNNER_EXPORTS: tuple[str, ...] = (
+    "FamiPixelSpecInitFromLive",
+    "FamiPixelSpecCaptureRootFromLive",
+    "FamiPixelSpecResetToRoot",
+    "FamiPixelSpecSetNesControllerState",
+    "FamiPixelSpecRunFrames",
+    "FamiPixelSpecGetNesControllerState",
+    "FamiPixelSpecReadNesInternalRam",
+    "FamiPixelSpecGetFrameCount",
+    "FamiPixelSpecRelease",
+)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Load MesenCore.dll and report M0-relevant exports."
+        description="Load MesenCore.dll and report fami-pixel-relevant exports."
     )
     parser.add_argument("dll", type=Path, help="Path to MesenCore.dll")
     return parser.parse_args()
+
+
+def _print_exports(core: MesenCore, title: str, names: tuple[str, ...]) -> list[str]:
+    print(title)
+    exports = core.available_exports(names)
+    width = max(map(len, exports))
+    for name, present in exports.items():
+        print(f"  {name:<{width}} : {'yes' if present else 'NO'}")
+    return [name for name, present in exports.items() if not present]
 
 
 def main() -> int:
@@ -33,14 +55,11 @@ def main() -> int:
     print(f"Version   : {core.version()}")
     print(f"Build date: {core.build_date()}")
     print()
-    print("M0 exports:")
 
-    exports = core.available_exports(M0_EXPORTS)
-    width = max(map(len, exports))
-    for name, present in exports.items():
-        print(f"  {name:<{width}} : {'yes' if present else 'NO'}")
+    missing = _print_exports(core, "M0 exports:", M0_EXPORTS)
+    print()
+    missing += _print_exports(core, "Native spec-runner exports:", SPEC_RUNNER_EXPORTS)
 
-    missing = [name for name, present in exports.items() if not present]
     if missing:
         print()
         print("Missing:")
