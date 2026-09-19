@@ -103,11 +103,18 @@ def test_v35_progress_dependencies_are_explicitly_composed():
     progress = v35._PROGRESS_CONTROL
 
     assert type(progress).__module__ == "fami_pixel.control.composition"
-    assert progress.cache_responses is v35._V27._cache_progress_responses
-    assert progress.groups_provider is v35._V27._progress_groups
+    assert progress.response_reader is v35.v11._read_json
+    assert type(progress.cache).__module__ == "fami_pixel.control.progress"
     assert progress.required_anchors == frozenset(v35._V27.REQUIRED_PROGRESS_ANCHORS)
-    assert progress.evaluated_anchors is v35._V27._evaluated_anchor_set
-    assert progress.lineage_validator is v35._V27._lineage_valid_proofs
+    assert progress.ledger is v35._V27._AUTHORITY_ACTION_LEDGER
+    assert progress.commit_frames == v35.v23.EXECUTION_PREFIX_FRAMES
+    assert progress.live_horizon_frames == v35.v23.LIVE_TRAJECTORY_HORIZON
+
+    source = inspect.getsource(v35)
+    assert "_V27._cache_progress_responses" not in source
+    assert "_V27._progress_groups" not in source
+    assert "_V27._evaluated_anchor_set" not in source
+    assert "_V27._lineage_valid_proofs" not in source
 
 
 def test_v35_collect_progress_dependencies_are_explicitly_composed():
