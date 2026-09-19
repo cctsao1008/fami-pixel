@@ -89,13 +89,22 @@ def test_v35_async_collect_dependencies_are_explicitly_composed():
     control = v35._EAGER_COLLECT_CONTROL
 
     assert type(control).__module__ == "fami_pixel.control.composition"
-    assert control.cache_provider is v35.v34._install_handoff_cache
-    assert control.handoff_frames == tuple(v35.v34.COLLECT_HANDOFF_FRAMES)
-    assert control.active_workers is v35.v34._active_collect_workers
-    assert control.proof_selector is v35.v34.select_lineage_collect_proof
-    assert control.ledger is v35.v34.v27._AUTHORITY_ACTION_LEDGER
+    assert control.cache_provider is v35._collect_response_cache
+    assert type(v35._COLLECT_RESPONSE_CACHE).__module__ == (
+        "fami_pixel.games.smb1.collect_handoff_deadline"
+    )
+    assert control.handoff_frames == v35._COLLECT_HANDOFF_FRAMES
+    assert control.active_workers is v35._active_collect_workers
+    assert control.proof_selector is v35.select_lineage_collect_proof
+    assert type(control.proof_selector).__module__ == "fami_pixel.games.smb1.collect_delay"
+    assert control.ledger is v35._V27._AUTHORITY_ACTION_LEDGER
     assert control.commit_frames == v35.v23.EXECUTION_PREFIX_FRAMES
     assert control.proof_horizon_frames is v35._proof_horizon_for_freshness
+
+    source = inspect.getsource(v35)
+    assert "v34._install_handoff_cache" not in source
+    assert "v34._active_collect_workers" not in source
+    assert "_unique_reward_chunks_for_worker" not in source
 
 
 def test_v35_progress_dependencies_are_explicitly_composed():
