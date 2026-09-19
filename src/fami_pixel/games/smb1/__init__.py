@@ -16,6 +16,7 @@ from .state import (
     PLAYER_CONTROL_SUBROUTINE,
     TITLE_SCREEN_MODE,
     Smb1State,
+    decode_smb1_state,
     read_smb1_state,
 )
 from .trajectory import (
@@ -46,6 +47,7 @@ __all__ = [
     "TrajectoryPlan",
     "TrajectoryResult",
     "action_to_nes_buttons",
+    "decode_smb1_state",
     "derive_game_events",
     "evaluate_mesen_trajectory",
     "observation_from_state",
