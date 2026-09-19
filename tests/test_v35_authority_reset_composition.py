@@ -43,7 +43,10 @@ def test_current_authority_reset_plan_freezes_exact_historical_descent_order():
         "v25-live-objective",
     )
 
-    assert v35._V29._COLLECT_RESPONSE_CACHE is v35._V30.v29._COLLECT_RESPONSE_CACHE
+    assert type(v35._COLLECT_RESPONSE_CACHE).__module__ == (
+        "fami_pixel.games.smb1.collect_handoff_deadline"
+    )
+    assert v35._collect_response_cache() is v35._COLLECT_RESPONSE_CACHE
     assert type(v35._PROGRESS_CONTROL.cache).__module__ == "fami_pixel.control.progress"
     assert v35._V27.v26 is v35.v26
     assert v35._V24 is v35.v25.v24
@@ -60,17 +63,16 @@ def test_current_authority_reset_plan_executes_concrete_dependencies_in_order(mo
         def clear(self):
             calls.append(self.name)
 
-    handoff = Clearable("handoff")
-    deadline = Clearable("deadline")
     collect = Clearable("collect")
     authority_plan = Clearable("authority-plan")
     progress = Clearable("progress")
     ledger = Clearable("ledger")
     live_objective = Clearable("live-objective")
 
-    monkeypatch.setattr(v35.v34, "_install_handoff_cache", lambda: handoff)
-    monkeypatch.setattr(v35._V33, "_install_deadline_cache", lambda: deadline)
-    monkeypatch.setattr(v35._V29, "_COLLECT_RESPONSE_CACHE", collect)
+    # Historical V34/V33/V32/V29 reset ancestry intentionally clears one shared
+    # active COLLECT cache four times. Preserve that exact ordering even though
+    # current authority no longer depends on those versioned cache globals.
+    monkeypatch.setattr(v35, "_COLLECT_RESPONSE_CACHE", collect)
     monkeypatch.setattr(v35._V28, "_AUTHORITY_PLAN_MEMORY", authority_plan)
     monkeypatch.setattr(v35, "_PROGRESS_CONTROL", SimpleNamespace(cache=progress))
     monkeypatch.setattr(v35._V27, "_AUTHORITY_ACTION_LEDGER", ledger)
@@ -80,8 +82,8 @@ def test_current_authority_reset_plan_executes_concrete_dependencies_in_order(mo
     v35._AUTHORITY_RUN_RESET_PLAN.reset_run_state()
 
     assert calls == [
-        "handoff",
-        "deadline",
+        "collect",
+        "collect",
         "collect",
         "collect",
         "authority-plan",
