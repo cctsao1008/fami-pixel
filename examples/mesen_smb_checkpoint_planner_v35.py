@@ -47,6 +47,7 @@ from fami_pixel.control import (
     LiveAuthorityControl,
     NamedRunReset,
     NamedRunSetup,
+    ProgressControl,
     authority_action_recording_layer,
     installed_checkpoint_request_enricher,
 )
@@ -266,9 +267,9 @@ def _v28_checkpoint_request_enricher() -> AuthorityContinuationRequestEnricher:
     )
 
 
-# Transitional composition roots for the current lower objective path.
-# Historical modules still provide concrete implementations, but the selector
-# below no longer discovers those dependencies through transitive module globals.
+# Transitional composition roots for the current lower objective path. Historical
+# cache/lineage providers remain injected explicitly while target detection,
+# PROGRESS cohort policy, and eager-COLLECT orchestration are stable.
 _EAGER_COLLECT_CONTROL = EagerCollectControl(
     response_reader=v11._read_json,
     cache_provider=v34._install_handoff_cache,
@@ -279,9 +280,16 @@ _EAGER_COLLECT_CONTROL = EagerCollectControl(
     proof_horizon_frames=_proof_horizon_for_freshness,
     commit_frames=v23.EXECUTION_PREFIX_FRAMES,
 )
+_PROGRESS_CONTROL = ProgressControl(
+    cache_responses=_V27._cache_progress_responses,
+    groups_provider=_V27._progress_groups,
+    required_anchors=frozenset(_V27.REQUIRED_PROGRESS_ANCHORS),
+    evaluated_anchors=_V27._evaluated_anchor_set,
+    lineage_validator=_V27._lineage_valid_proofs,
+)
 _COLLECT_PROGRESS_CONTROL = CollectProgressControl(
     target_selector=collect_target_from_radar,
-    progress_selector=v34.v27._best_forward_plan_partial_v27,
+    progress=_PROGRESS_CONTROL,
     eager_collect=_EAGER_COLLECT_CONTROL,
 )
 _AUTHORITY_RUNTIME_SCOPE = AuthorityRuntimeScope(
