@@ -16,6 +16,7 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 from fami_pixel.planning.progress_selection import ProgressSelection, select_progress_proof
 
 from .eager_collect import CollectResponseCache, EagerCollectDecision, select_eager_collect_decision
+from .progress import ProgressResponseCache, evaluated_anchor_set, lineage_valid_proofs
 from .response_intake import ResponseReader, read_available_responses
 
 
@@ -23,10 +24,6 @@ CacheProvider = Callable[[], CollectResponseCache]
 ActiveWorkerSelector = Callable[[int], Iterable[int]]
 ProofHorizonSelector = Callable[[int], int]
 CollectTargetSelector = Callable[[Mapping], str | None]
-ProgressCacheUpdater = Callable[..., None]
-ProgressGroupsProvider = Callable[[], Mapping[tuple[int, int], Sequence[dict]]]
-ProgressAnchorSelector = Callable[[list[dict]], set[str]]
-ProgressLineageValidator = Callable[..., tuple[list[dict], dict[str, int]]]
 
 
 @dataclass(frozen=True)
@@ -85,18 +82,14 @@ class EagerCollectControl:
 
 @dataclass(frozen=True)
 class ProgressControl:
-    """Explicit dependencies for one PROGRESS authority scan.
+    """Stable PROGRESS response intake, lineage validation, and cohort policy."""
 
-    Cache intake, anchor accounting, and lineage validation remain injected
-    compatibility providers. Ordering, quorum, selection, result shaping, and
-    telemetry are stable planning policy.
-    """
-
-    cache_responses: ProgressCacheUpdater
-    groups_provider: ProgressGroupsProvider
+    response_reader: ResponseReader
+    cache: ProgressResponseCache
     required_anchors: frozenset[str]
-    evaluated_anchors: ProgressAnchorSelector
-    lineage_validator: ProgressLineageValidator
+    ledger: Any
+    commit_frames: int
+    live_horizon_frames: int
 
     def decide(
         self,
@@ -108,18 +101,38 @@ class ProgressControl:
         live_radar: Mapping | None,
     ) -> ProgressSelection:
         radar = {} if live_radar is None else live_radar
-        self.cache_responses(
+        responses = read_available_responses(
             response_paths,
+            reader=self.response_reader,
+        )
+        self.cache.ingest(
+            responses,
             current_frame=int(current_frame),
             freshness=int(freshness),
             last_applied_generation=int(last_applied_generation),
+            live_horizon_frames=int(self.live_horizon_frames),
         )
+
+        def anchors(proofs: list[dict]) -> set[str]:
+            return evaluated_anchor_set(
+                proofs,
+                required_anchors=self.required_anchors,
+            )
+
+        def validate(proofs: list[dict], *, current_frame: int):
+            return lineage_valid_proofs(
+                proofs,
+                ledger=self.ledger,
+                current_frame=int(current_frame),
+                commit_frames=int(self.commit_frames),
+            )
+
         return select_progress_proof(
-            self.groups_provider(),
+            self.cache.groups(),
             current_frame=int(current_frame),
             required_anchors=self.required_anchors,
-            evaluated_anchors=self.evaluated_anchors,
-            lineage_validator=self.lineage_validator,
+            evaluated_anchors=anchors,
+            lineage_validator=validate,
             live_radar=radar,
         )
 
