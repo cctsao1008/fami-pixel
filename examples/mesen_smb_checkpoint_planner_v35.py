@@ -48,6 +48,7 @@ from fami_pixel.control import (
     NamedRunReset,
     NamedRunSetup,
     ProgressControl,
+    ProgressResponseCache,
     authority_action_recording_layer,
     installed_checkpoint_request_enricher,
 )
@@ -111,7 +112,7 @@ def _reset_v28_authority_plan_memory() -> None:
 
 
 def _reset_v27_progress_response_cache() -> None:
-    _V27._PROGRESS_RESPONSE_CACHE.clear()
+    _PROGRESS_CONTROL.cache.clear()
 
 
 def _reset_v27_authority_action_ledger() -> None:
@@ -268,8 +269,9 @@ def _v28_checkpoint_request_enricher() -> AuthorityContinuationRequestEnricher:
 
 
 # Transitional composition roots for the current lower objective path. Historical
-# cache/lineage providers remain injected explicitly while target detection,
-# PROGRESS cohort policy, and eager-COLLECT orchestration are stable.
+# COLLECT providers and the V27 action ledger remain injected explicitly while
+# target detection, PROGRESS cache/lineage/cohort policy, and eager-COLLECT
+# orchestration are stable.
 _EAGER_COLLECT_CONTROL = EagerCollectControl(
     response_reader=v11._read_json,
     cache_provider=v34._install_handoff_cache,
@@ -281,11 +283,12 @@ _EAGER_COLLECT_CONTROL = EagerCollectControl(
     commit_frames=v23.EXECUTION_PREFIX_FRAMES,
 )
 _PROGRESS_CONTROL = ProgressControl(
-    cache_responses=_V27._cache_progress_responses,
-    groups_provider=_V27._progress_groups,
+    response_reader=v11._read_json,
+    cache=ProgressResponseCache(),
     required_anchors=frozenset(_V27.REQUIRED_PROGRESS_ANCHORS),
-    evaluated_anchors=_V27._evaluated_anchor_set,
-    lineage_validator=_V27._lineage_valid_proofs,
+    ledger=_V27._AUTHORITY_ACTION_LEDGER,
+    commit_frames=v23.EXECUTION_PREFIX_FRAMES,
+    live_horizon_frames=v23.LIVE_TRAJECTORY_HORIZON,
 )
 _COLLECT_PROGRESS_CONTROL = CollectProgressControl(
     target_selector=collect_target_from_radar,
