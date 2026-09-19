@@ -50,6 +50,7 @@ from fami_pixel.control import (
     authority_action_recording_layer,
     installed_checkpoint_request_enricher,
 )
+from fami_pixel.planning import collect_target_from_radar
 
 import mesen_smb_checkpoint_planner as base
 import mesen_smb_checkpoint_planner_v11 as v11
@@ -279,7 +280,7 @@ _EAGER_COLLECT_CONTROL = EagerCollectControl(
     commit_frames=v23.EXECUTION_PREFIX_FRAMES,
 )
 _COLLECT_PROGRESS_CONTROL = CollectProgressControl(
-    target_selector=v25._collect_target_from_radar,
+    target_selector=collect_target_from_radar,
     progress_selector=v34.v27._best_forward_plan_partial_v27,
     eager_collect=_EAGER_COLLECT_CONTROL,
 )
