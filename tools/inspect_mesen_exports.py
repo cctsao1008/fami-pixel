@@ -17,6 +17,7 @@ SPEC_RUNNER_EXPORTS: tuple[str, ...] = (
     "FamiPixelSpecResetToRoot",
     "FamiPixelSpecSetNesControllerState",
     "FamiPixelSpecRunFrames",
+    "FamiPixelSpecRunSchedule",
     "FamiPixelSpecGetNesControllerState",
     "FamiPixelSpecReadNesInternalRam",
     "FamiPixelSpecGetFrameCount",
