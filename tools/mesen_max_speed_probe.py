@@ -7,9 +7,11 @@ Mesen's verified EmulationFlags::MaximumSpeed (0x04) through the existing
 SetEmulationFlag export. It is intentionally a probe: the production runtime is
 not changed by this file.
 
-The probe also replays one fixed 32-frame input sequence in both modes and checks
-that decoded SMB1 RAM state is identical. MaximumSpeed is interesting only if it
-changes wall-clock pacing without changing the deterministic emulated result.
+The probe compares scalar and batched stepping, including a V35-shaped 8 x 4f
+slot-restored branch rollout. It also replays one scripted 32-frame input sequence
+in both pacing modes and checks that decoded SMB1 RAM state is identical.
+MaximumSpeed is interesting only if it changes wall-clock pacing without changing
+the deterministic emulated result.
 """
 
 from __future__ import annotations
@@ -37,6 +39,15 @@ from fami_pixel.games.smb1 import read_smb1_state
 
 EMULATION_FLAG_MAXIMUM_SPEED = 0x04
 DETERMINISM_FRAMES = 32
+NES_A = 0x01
+NES_B = 0x02
+NES_RIGHT = 0x80
+SCRIPTED_INPUT = (
+    (NES_RIGHT,) * 8
+    + (NES_RIGHT | NES_A,) * 8
+    + (NES_RIGHT | NES_B,) * 8
+    + (0x00,) * 8
+)
 
 
 def _int_auto(value: str) -> int:
@@ -98,9 +109,9 @@ def _restore(core: MesenCore, slot: int) -> None:
     core.load_state_slot(int(slot))
 
 
-def _step_fixed(core: MesenCore, *, count: int, buttons: int, timeout_ms: int) -> None:
-    set_nes_controller_state(core, 0, int(buttons))
-    for _ in range(int(count)):
+def _step_sequence(core: MesenCore, *, buttons_seq: tuple[int, ...], timeout_ms: int) -> None:
+    for buttons in buttons_seq:
+        set_nes_controller_state(core, 0, int(buttons))
         core.step_frame_sync(1, int(timeout_ms))
 
 
@@ -157,6 +168,23 @@ def _measure_mode(
         bench.BRANCH_COUNT * bench.BRANCH_FRAMES
     )
 
+    _restore(core, args.slot)
+    results["branch_8x4_slot_batch"] = bench.measure(
+        lambda: bench._branch_batch(
+            core,
+            restore=lambda: _restore(core, args.slot),
+            buttons=int(args.buttons),
+            timeout_ms=timeout_ms,
+        ),
+        samples=int(args.branch_samples),
+        warmup=min(2, int(args.warmup)),
+        units_per_sample=1,
+        unit="decision",
+    )
+    results["branch_8x4_slot_batch"]["simulated_frames_per_decision"] = (
+        bench.BRANCH_COUNT * bench.BRANCH_FRAMES
+    )
+
     return results
 
 
@@ -167,6 +195,24 @@ def _speedups(normal: dict[str, dict], maximum: dict[str, dict]) -> dict[str, fl
         maximum_p50 = float(maximum[name]["p50_us_per_unit"])
         if maximum_p50 > 0:
             values[name] = normal_p50 / maximum_p50
+    return values
+
+
+def _within_mode_batch_gain(results: dict[str, dict]) -> dict[str, float]:
+    values: dict[str, float] = {}
+    scalar = results.get("step_sync_1")
+    batch = results.get("step_sync_batch")
+    if scalar and batch and float(batch["p50_us_per_unit"]) > 0:
+        values["step_batch_speedup_per_frame"] = (
+            float(scalar["p50_us_per_unit"]) / float(batch["p50_us_per_unit"])
+        )
+    branch_scalar = results.get("branch_8x4_slot_scalar")
+    branch_batch = results.get("branch_8x4_slot_batch")
+    if branch_scalar and branch_batch and float(branch_batch["p50_us_per_unit"]) > 0:
+        values["branch_batch_speedup"] = (
+            float(branch_scalar["p50_us_per_unit"])
+            / float(branch_batch["p50_us_per_unit"])
+        )
     return values
 
 
@@ -201,31 +247,21 @@ def run(args: argparse.Namespace) -> dict:
             timeout_ms=timeout_ms,
         )
 
-        # Determinism witness: replay the exact same 32 input frames from the
-        # same save slot under both pacing modes and compare decoded SMB1 RAM.
+        # Determinism witness: replay the exact same non-trivial 32 input frames
+        # from the same save slot under both pacing modes and compare decoded RAM.
         _restore(core, args.slot)
         _set_maximum_speed(core, False)
-        _step_fixed(
-            core,
-            count=DETERMINISM_FRAMES,
-            buttons=int(args.buttons),
-            timeout_ms=timeout_ms,
-        )
+        _step_sequence(core, buttons_seq=SCRIPTED_INPUT, timeout_ms=timeout_ms)
         normal_signature = _state_signature(core)
 
         _restore(core, args.slot)
         _set_maximum_speed(core, True)
-        _step_fixed(
-            core,
-            count=DETERMINISM_FRAMES,
-            buttons=int(args.buttons),
-            timeout_ms=timeout_ms,
-        )
+        _step_sequence(core, buttons_seq=SCRIPTED_INPUT, timeout_ms=timeout_ms)
         maximum_signature = _state_signature(core)
         deterministic_match = normal_signature == maximum_signature
 
         payload = {
-            "schema": 1,
+            "schema": 2,
             "probe": "mesen-maximum-speed",
             "mesen": {
                 "dll": str(Path(args.dll).expanduser().resolve()),
@@ -242,10 +278,15 @@ def run(args: argparse.Namespace) -> dict:
                 "step_timeout_s": float(args.step_timeout),
                 "batch_frames": int(args.batch_frames),
                 "determinism_frames": DETERMINISM_FRAMES,
+                "determinism_script": [int(value) for value in SCRIPTED_INPUT],
             },
             "normal": normal,
             "maximum_speed": maximum,
             "speedup_p50": _speedups(normal, maximum),
+            "within_mode_batch_gain": {
+                "normal": _within_mode_batch_gain(normal),
+                "maximum_speed": _within_mode_batch_gain(maximum),
+            },
             "determinism": {
                 "decoded_smb1_state_match": bool(deterministic_match),
             },
@@ -275,11 +316,16 @@ def print_report(payload: dict, output: Path) -> None:
     print("Mesen MaximumSpeed A/B probe", flush=True)
     _print_mode("\nnormal pacing", payload["normal"])
     _print_mode("\nmaximum speed", payload["maximum_speed"])
-    print("\np50 speedups", flush=True)
+    print("\np50 speedups normal -> maximum", flush=True)
     for name, value in payload["speedup_p50"].items():
         print(f"  {name}: {float(value):.3f}x", flush=True)
+    print("\nwithin-mode batching gains", flush=True)
+    for mode, gains in payload["within_mode_batch_gain"].items():
+        print(f"  {mode}", flush=True)
+        for name, value in gains.items():
+            print(f"    {name}: {float(value):.3f}x", flush=True)
     match = bool(payload["determinism"]["decoded_smb1_state_match"])
-    print(f"\ndeterminism 32f decoded SMB1 state: {'PASS' if match else 'FAIL'}", flush=True)
+    print(f"\ndeterminism scripted 32f decoded SMB1 state: {'PASS' if match else 'FAIL'}", flush=True)
     print(f"JSON: {output.expanduser().resolve()}", flush=True)
 
 
