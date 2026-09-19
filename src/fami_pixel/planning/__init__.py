@@ -14,9 +14,11 @@ from .collect_selection import (
     select_collect_proof,
     shape_eager_collect_result,
 )
+from .collect_target import COLLECT_TARGET_TYPES, collect_target_from_radar
 from .contracts import PlanSelector
 
 __all__ = [
+    "COLLECT_TARGET_TYPES",
     "CollectHandoffStage",
     "CollectProofSelector",
     "CollectSelectionLike",
@@ -24,6 +26,7 @@ __all__ = [
     "active_worker_ids",
     "collect_anchor_proofs",
     "collect_handoff_proofs",
+    "collect_target_from_radar",
     "evaluate_handoff_stage",
     "ordered_handoffs",
     "select_collect_proof",
