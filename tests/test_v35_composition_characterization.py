@@ -98,6 +98,18 @@ def test_v35_async_collect_dependencies_are_explicitly_composed():
     assert control.proof_horizon_frames is v35._proof_horizon_for_freshness
 
 
+def test_v35_progress_dependencies_are_explicitly_composed():
+    v35 = _load_v35()
+    progress = v35._PROGRESS_CONTROL
+
+    assert type(progress).__module__ == "fami_pixel.control.composition"
+    assert progress.cache_responses is v35._V27._cache_progress_responses
+    assert progress.groups_provider is v35._V27._progress_groups
+    assert progress.required_anchors == frozenset(v35._V27.REQUIRED_PROGRESS_ANCHORS)
+    assert progress.evaluated_anchors is v35._V27._evaluated_anchor_set
+    assert progress.lineage_validator is v35._V27._lineage_valid_proofs
+
+
 def test_v35_collect_progress_dependencies_are_explicitly_composed():
     v35 = _load_v35()
     control = v35._COLLECT_PROGRESS_CONTROL
@@ -105,7 +117,7 @@ def test_v35_collect_progress_dependencies_are_explicitly_composed():
     assert type(control).__module__ == "fami_pixel.control.composition"
     assert control.target_selector is v35.collect_target_from_radar
     assert type(control.target_selector).__module__ == "fami_pixel.planning.collect_target"
-    assert control.progress_selector is v35.v34.v27._best_forward_plan_partial_v27
+    assert control.progress is v35._PROGRESS_CONTROL
     assert control.eager_collect is v35._EAGER_COLLECT_CONTROL
 
 
