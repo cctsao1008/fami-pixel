@@ -16,6 +16,7 @@ from .collect_selection import (
 )
 from .collect_target import COLLECT_TARGET_TYPES, collect_target_from_radar
 from .contracts import PlanSelector
+from .progress_selection import ProgressSelection, select_progress_proof
 
 __all__ = [
     "COLLECT_TARGET_TYPES",
@@ -23,6 +24,7 @@ __all__ = [
     "CollectProofSelector",
     "CollectSelectionLike",
     "PlanSelector",
+    "ProgressSelection",
     "active_worker_ids",
     "collect_anchor_proofs",
     "collect_handoff_proofs",
@@ -30,5 +32,6 @@ __all__ = [
     "evaluate_handoff_stage",
     "ordered_handoffs",
     "select_collect_proof",
+    "select_progress_proof",
     "shape_eager_collect_result",
 ]
