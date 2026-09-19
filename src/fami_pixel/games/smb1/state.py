@@ -67,6 +67,39 @@ class Smb1State:
         )
 
 
+def _ram_byte(ram: bytes, address: int) -> int:
+    if not 0 <= int(address) < len(ram):
+        raise ValueError(f"RAM snapshot does not contain address 0x{int(address):04X}")
+    return int(ram[int(address)])
+
+
+def decode_smb1_state(ram: bytes) -> Smb1State:
+    """Decode the M0 gameplay state from one coherent NES internal-RAM image.
+
+    Native speculative rollouts expose a complete 2 KiB RAM witness at each
+    exact PPU-period boundary.  Keeping this decoder separate from ``MesenCore``
+    lets the normal live path and the speculative path project the same SMB1
+    state contract without teaching the emulator wrapper any game semantics.
+    """
+
+    return Smb1State(
+        frame_counter=_ram_byte(ram, ADDR_FRAME_COUNTER),
+        oper_mode=_ram_byte(ram, ADDR_OPER_MODE),
+        oper_mode_task=_ram_byte(ram, ADDR_OPER_MODE_TASK),
+        game_engine_subroutine=_ram_byte(ram, ADDR_GAME_ENGINE_SUBROUTINE),
+        world=_ram_byte(ram, ADDR_WORLD_NUMBER),
+        level=_ram_byte(ram, ADDR_LEVEL_NUMBER),
+        player_page=_ram_byte(ram, ADDR_PLAYER_PAGE),
+        player_x=_ram_byte(ram, ADDR_PLAYER_X),
+        player_y_high=_ram_byte(ram, ADDR_PLAYER_Y_HIGH),
+        player_y=_ram_byte(ram, ADDR_PLAYER_Y),
+        player_state=_ram_byte(ram, ADDR_PLAYER_STATE),
+        player_x_speed=_ram_byte(ram, ADDR_PLAYER_X_SPEED),
+        player_y_speed=_ram_byte(ram, ADDR_PLAYER_Y_SPEED),
+        saved_joypad1=_ram_byte(ram, ADDR_SAVED_JOYPAD1),
+    )
+
+
 def read_smb1_state(core: MesenCore) -> Smb1State:
     """Read the small SMB1 RAM surface needed by the M0 gameplay witness."""
 
