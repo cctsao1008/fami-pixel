@@ -17,6 +17,7 @@ from .collect_selection import (
 from .collect_target import COLLECT_TARGET_TYPES, collect_target_from_radar
 from .contracts import PlanSelector
 from .progress_selection import ProgressSelection, select_progress_proof
+from .sharding import shard_unique_items
 
 __all__ = [
     "COLLECT_TARGET_TYPES",
@@ -34,4 +35,5 @@ __all__ = [
     "select_collect_proof",
     "select_progress_proof",
     "shape_eager_collect_result",
+    "shard_unique_items",
 ]
