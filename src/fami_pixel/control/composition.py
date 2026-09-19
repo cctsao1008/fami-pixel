@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
+from fami_pixel.planning.progress_selection import ProgressSelection, select_progress_proof
+
 from .eager_collect import CollectResponseCache, EagerCollectDecision, select_eager_collect_decision
 from .response_intake import ResponseReader, read_available_responses
 
@@ -21,7 +23,10 @@ CacheProvider = Callable[[], CollectResponseCache]
 ActiveWorkerSelector = Callable[[int], Iterable[int]]
 ProofHorizonSelector = Callable[[int], int]
 CollectTargetSelector = Callable[[Mapping], str | None]
-ProgressSelector = Callable[[Sequence[Path], int, int, int, Mapping], dict | None]
+ProgressCacheUpdater = Callable[..., None]
+ProgressGroupsProvider = Callable[[], Mapping[tuple[int, int], Sequence[dict]]]
+ProgressAnchorSelector = Callable[[list[dict]], set[str]]
+ProgressLineageValidator = Callable[..., tuple[list[dict], dict[str, int]]]
 
 
 @dataclass(frozen=True)
@@ -79,13 +84,49 @@ class EagerCollectControl:
 
 
 @dataclass(frozen=True)
-class CollectProgressDecision:
-    """Lower-objective result below SURVIVE authority.
+class ProgressControl:
+    """Explicit dependencies for one PROGRESS authority scan.
 
-    ``meta`` is present only for the stable asynchronous COLLECT path.  Historical
-    PROGRESS selection remains responsible for its existing telemetry side effects
-    until that policy is extracted separately.
+    Cache intake, anchor accounting, and lineage validation remain injected
+    compatibility providers. Ordering, quorum, selection, result shaping, and
+    telemetry are stable planning policy.
     """
+
+    cache_responses: ProgressCacheUpdater
+    groups_provider: ProgressGroupsProvider
+    required_anchors: frozenset[str]
+    evaluated_anchors: ProgressAnchorSelector
+    lineage_validator: ProgressLineageValidator
+
+    def decide(
+        self,
+        response_paths: Sequence[Path],
+        *,
+        current_frame: int,
+        freshness: int,
+        last_applied_generation: int,
+        live_radar: Mapping | None,
+    ) -> ProgressSelection:
+        radar = {} if live_radar is None else live_radar
+        self.cache_responses(
+            response_paths,
+            current_frame=int(current_frame),
+            freshness=int(freshness),
+            last_applied_generation=int(last_applied_generation),
+        )
+        return select_progress_proof(
+            self.groups_provider(),
+            current_frame=int(current_frame),
+            required_anchors=self.required_anchors,
+            evaluated_anchors=self.evaluated_anchors,
+            lineage_validator=self.lineage_validator,
+            live_radar=radar,
+        )
+
+
+@dataclass(frozen=True)
+class CollectProgressDecision:
+    """Lower-objective result below SURVIVE authority."""
 
     plan: dict | None
     meta: dict | None
@@ -96,14 +137,13 @@ class CollectProgressDecision:
 class CollectProgressControl:
     """Explicit lower-objective composition for COLLECT versus PROGRESS.
 
-    This object does not own SURVIVE/preemption ordering.  It binds the current
-    reward-target detector, historical PROGRESS selector, and stable eager-COLLECT
-    controller behind one dependency boundary so the current runner no longer
-    reaches through historical modules for objective detection or fallback.
+    This object does not own SURVIVE/preemption ordering. It binds stable reward
+    target detection, stable PROGRESS orchestration, and stable eager-COLLECT
+    control behind one dependency boundary.
     """
 
     target_selector: CollectTargetSelector
-    progress_selector: ProgressSelector
+    progress: ProgressControl
     eager_collect: EagerCollectControl
 
     def target_type(self, live_radar: Mapping | None) -> str | None:
@@ -121,18 +161,22 @@ class CollectProgressControl:
         target_type: str | None,
         live_radar: Mapping | None,
     ) -> CollectProgressDecision:
-        """Choose historical PROGRESS or stable asynchronous COLLECT control."""
+        """Choose stable PROGRESS or stable asynchronous COLLECT control."""
 
         radar = {} if live_radar is None else live_radar
         if target_type is None:
-            plan = self.progress_selector(
+            decision = self.progress.decide(
                 response_paths,
-                int(current_frame),
-                int(freshness),
-                int(last_applied_generation),
-                radar,
+                current_frame=int(current_frame),
+                freshness=int(freshness),
+                last_applied_generation=int(last_applied_generation),
+                live_radar=radar,
             )
-            return CollectProgressDecision(plan=plan, meta=None, target_type=None)
+            return CollectProgressDecision(
+                plan=decision.plan,
+                meta=decision.meta,
+                target_type=None,
+            )
 
         target = str(target_type)
         decision = self.eager_collect.decide(
