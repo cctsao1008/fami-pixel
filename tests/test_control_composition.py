@@ -112,33 +112,61 @@ def test_eager_collect_control_never_reduces_requested_freshness(monkeypatch, tm
     assert captured["retention_frames"] == 12
 
 
-def test_progress_control_binds_cache_groups_and_stable_selector(monkeypatch):
+def test_progress_control_binds_stable_intake_cache_lineage_and_selector(monkeypatch):
     paths = [Path("worker-0.json")]
+    payload = {"planner_mode": "progress-search", "generation": 7}
     groups = {(7, 120): [{"candidate": "run", "root_frame": 120}]}
+    ledger = object()
+    read_paths = []
     cache_calls = []
+    helper_calls = []
     captured = {}
     sentinel = ProgressSelection(
         plan={"candidate": "run"},
         meta={"forward_model_status": "selected-lineage-cohort"},
     )
 
+    class FakeCache:
+        def ingest(self, responses, **kwargs):
+            cache_calls.append((responses, kwargs))
+
+        def groups(self):
+            return groups
+
+    def reader(path):
+        read_paths.append(path)
+        return payload
+
+    def fake_anchors(proofs, *, required_anchors):
+        helper_calls.append(("anchors", proofs, required_anchors))
+        return {"run"}
+
+    def fake_lineage(proofs, *, ledger, current_frame, commit_frames):
+        helper_calls.append(
+            ("lineage", proofs, ledger, current_frame, commit_frames)
+        )
+        return proofs, {}
+
     def fake_select(seen_groups, **kwargs):
         captured["groups"] = seen_groups
         captured.update(kwargs)
+        assert kwargs["evaluated_anchors"]([{"candidate": "run"}]) == {"run"}
+        assert kwargs["lineage_validator"](
+            [{"candidate": "run"}], current_frame=124
+        ) == ([{"candidate": "run"}], {})
         return sentinel
 
+    monkeypatch.setattr(composition, "evaluated_anchor_set", fake_anchors)
+    monkeypatch.setattr(composition, "lineage_valid_proofs", fake_lineage)
     monkeypatch.setattr(composition, "select_progress_proof", fake_select)
 
-    anchors = lambda proofs: {"run"}
-    lineage = lambda proofs, **kwargs: (proofs, {})
     control = ProgressControl(
-        cache_responses=lambda seen_paths, **kwargs: cache_calls.append(
-            (seen_paths, kwargs)
-        ),
-        groups_provider=lambda: groups,
+        response_reader=reader,
+        cache=FakeCache(),
         required_anchors=frozenset({"run"}),
-        evaluated_anchors=anchors,
-        lineage_validator=lineage,
+        ledger=ledger,
+        commit_frames=4,
+        live_horizon_frames=64,
     )
 
     decision = control.decide(
@@ -150,22 +178,26 @@ def test_progress_control_binds_cache_groups_and_stable_selector(monkeypatch):
     )
 
     assert decision is sentinel
+    assert read_paths == paths
     assert cache_calls == [
         (
-            paths,
+            [payload],
             {
                 "current_frame": 124,
                 "freshness": 16,
                 "last_applied_generation": 5,
+                "live_horizon_frames": 64,
             },
         )
     ]
     assert captured["groups"] is groups
     assert captured["current_frame"] == 124
     assert captured["required_anchors"] == frozenset({"run"})
-    assert captured["evaluated_anchors"] is anchors
-    assert captured["lineage_validator"] is lineage
     assert captured["live_radar"] == {"camera_x": 10}
+    assert helper_calls == [
+        ("anchors", [{"candidate": "run"}], frozenset({"run"})),
+        ("lineage", [{"candidate": "run"}], ledger, 124, 4),
+    ]
 
 
 def test_collect_progress_control_routes_no_target_to_stable_progress():
