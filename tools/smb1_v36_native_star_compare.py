@@ -3,16 +3,21 @@
 
 The tool restores one fami-pixel reward-visible Mesen scenario, computes the V35
 current-root decision, restores the same root again, and computes V36 through the
-separate native speculative emulator.  PASS requires the complete policy result
+separate native speculative emulator. PASS requires the complete policy result
 and every candidate's semantic evidence/ranking to match; timing fields are
 reported but excluded from equality.
+
+Optional repeated native timing recaptures the same live root before each sample.
+This separates first-use setup cost from persistent-runner steady-state latency.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
+import statistics
 import sys
 import time
 
@@ -47,6 +52,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dll", type=Path, default=Path("build/mesen/MesenCore.dll"))
     parser.add_argument("--home", type=Path, default=Path("build/mesen-home-v36-star-compare"))
     parser.add_argument("--step-timeout", type=float, default=5.0)
+    parser.add_argument("--native-samples", type=int, default=1)
     parser.add_argument(
         "--output",
         type=Path,
@@ -55,6 +61,8 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.step_timeout <= 0:
         parser.error("--step-timeout must be > 0")
+    if args.native_samples <= 0:
+        parser.error("--native-samples must be > 0")
     return args
 
 
@@ -153,6 +161,30 @@ def _plan_semantics(plan: dict | None) -> dict | None:
     return result
 
 
+def _percentile(values: list[float], q: float) -> float:
+    ordered = sorted(float(value) for value in values)
+    if len(ordered) == 1:
+        return ordered[0]
+    pos = (len(ordered) - 1) * float(q)
+    lo = int(math.floor(pos))
+    hi = int(math.ceil(pos))
+    if lo == hi:
+        return ordered[lo]
+    weight = pos - lo
+    return ordered[lo] * (1.0 - weight) + ordered[hi] * weight
+
+
+def _timing_summary(values: list[float]) -> dict:
+    return {
+        "samples": len(values),
+        "mean_ms": statistics.fmean(values),
+        "p50_ms": _percentile(values, 0.50),
+        "p95_ms": _percentile(values, 0.95),
+        "min_ms": min(values),
+        "max_ms": max(values),
+    }
+
+
 def _shutdown(core: MesenCore) -> None:
     v36._release_native_spec_runner()
     try:
@@ -203,33 +235,46 @@ def main() -> int:
             live_radar=radar,
         )
         legacy_ms = (time.perf_counter() - t0) * 1000.0
-
-        _restore_root(core, state_file, manifest)
-        current2, radar2 = _collect_radar(core, StickyCollectObjective(ttl_frames=objective.ttl_frames))
-        if int(current2.native_frame_id) != int(current.native_frame_id):
-            raise RuntimeError("restored root frame changed between comparison passes")
-
-        t1 = time.perf_counter()
-        native = v36._sync_native_star_plan(
-            core,
-            current_frame=int(current2.native_frame_id),
-            live_radar=radar2,
-        )
-        native_ms = (time.perf_counter() - t1) * 1000.0
-
         legacy_semantics = _plan_semantics(legacy)
-        native_semantics = _plan_semantics(native)
+
+        native_times: list[float] = []
+        native_semantics = None
+        for sample in range(int(args.native_samples)):
+            _restore_root(core, state_file, manifest)
+            sample_objective = StickyCollectObjective(ttl_frames=objective.ttl_frames)
+            current2, radar2 = _collect_radar(core, sample_objective)
+            if int(current2.native_frame_id) != int(current.native_frame_id):
+                raise RuntimeError("restored root frame changed between comparison passes")
+
+            t1 = time.perf_counter()
+            native = v36._sync_native_star_plan(
+                core,
+                current_frame=int(current2.native_frame_id),
+                live_radar=radar2,
+            )
+            native_ms = (time.perf_counter() - t1) * 1000.0
+            native_times.append(native_ms)
+            current_semantics = _plan_semantics(native)
+            if native_semantics is None:
+                native_semantics = current_semantics
+            elif current_semantics != native_semantics:
+                raise RuntimeError(
+                    f"native semantics changed across repeated same-root sample {sample + 1}"
+                )
+
         passed = legacy_semantics == native_semantics
+        native_timing = _timing_summary(native_times)
         payload = {
-            "schema": 1,
+            "schema": 2,
             "probe": "v36-native-star-semantic-compare",
             "scenario": str(scenario_dir),
             "root_frame": int(current.native_frame_id),
             "root_x": int(current.mario_x_abs),
             "pass": bool(passed),
             "legacy_ms": round(legacy_ms, 3),
-            "native_ms": round(native_ms, 3),
-            "speedup": None if native_ms <= 0 else legacy_ms / native_ms,
+            "native_ms": round(native_times[0], 3),
+            "native_timing": native_timing,
+            "speedup": None if native_timing["p50_ms"] <= 0 else legacy_ms / native_timing["p50_ms"],
             "legacy": legacy_semantics,
             "native": native_semantics,
         }
@@ -240,9 +285,18 @@ def main() -> int:
         print("V35 vs V36 current-root Star semantic comparison")
         print(f"root       : frame={current.native_frame_id} X={current.mario_x_abs}")
         print(f"V35 legacy : {legacy_ms:.3f} ms")
-        print(f"V36 native : {native_ms:.3f} ms")
-        if native_ms > 0:
-            print(f"speedup    : {legacy_ms / native_ms:.2f}x")
+        if len(native_times) == 1:
+            print(f"V36 native : {native_times[0]:.3f} ms")
+        else:
+            print(
+                "V36 native : "
+                f"p50={native_timing['p50_ms']:.3f} ms "
+                f"p95={native_timing['p95_ms']:.3f} ms "
+                f"first={native_times[0]:.3f} ms "
+                f"n={len(native_times)}"
+            )
+        if native_timing["p50_ms"] > 0:
+            print(f"speedup    : {legacy_ms / native_timing['p50_ms']:.2f}x (vs native p50)")
         print(f"semantics  : {'PASS' if passed else 'FAIL'}")
         print(f"JSON       : {output}")
         if passed:
