@@ -156,6 +156,41 @@ def test_native_reward_evaluator_stops_on_native_star_capability_proof():
     assert outcome["observation"].native_frame_id == 102
 
 
+def test_native_reward_evaluator_decodes_full_radar_only_at_semantic_endpoint(monkeypatch):
+    v36 = _load_v36()
+    root_observation, root_radar = _root_context()
+    witnesses = tuple(
+        NativeSpecFrameWitness(
+            101 + index,
+            0x82,
+            _ram(smb_frame=11 + index, joypad=0x82),
+        )
+        for index in range(4)
+    )
+    runner = _FakeRunner(witnesses)
+    calls = []
+    original = v36.decode_smb1_radar
+
+    def counted(ram, *, player_x, **kwargs):
+        calls.append((ram, int(player_x)))
+        return original(ram, player_x=player_x, **kwargs)
+
+    monkeypatch.setattr(v36, "decode_smb1_radar", counted)
+    outcome = v36._evaluate_native_reward_chunk(
+        runner,
+        REWARD_BEAM_CHUNKS_WITH_HOLD[1],
+        root_observation=root_observation,
+        root_radar=root_radar,
+        target_type="star",
+        request_radar=root_radar,
+    )
+
+    assert outcome["frames"] == 4
+    assert outcome["collected"] is False
+    assert len(calls) == 1
+    assert calls[0][0] == witnesses[-1].ram
+
+
 def test_v36_falls_back_to_v35_exact_live_core_path_on_native_failure(monkeypatch):
     v36 = _load_v36()
     sentinel = {"candidate": "legacy-v35-fallback"}
