@@ -2,7 +2,7 @@
 """V36 planner: in-process native exact-boundary Star micro-MPC.
 
 V35 proved the synchronous current-root Star policy but evaluated every 4-frame
-candidate by repeatedly restoring and stepping the live authority emulator.  The
+candidate by repeatedly restoring and stepping the live authority emulator. The
 Mesen fork now exposes one separate threadless speculative emulator that can
 restore the same current root and execute variable-input schedules at the exact
 same debugger PPU-period boundaries as the authoritative path.
@@ -16,7 +16,7 @@ V36 keeps V35 policy semantics unchanged:
   ignored semantically and never mutates live authority.
 * Native runner failure falls back to V35's existing live-core exact path.
 
-Only the transition substrate changes.  SMB1 decoding, reward proof, and ranking
+Only the transition substrate changes. SMB1 decoding, reward proof, and ranking
 remain in fami-pixel rather than moving into Mesen.
 """
 
@@ -32,7 +32,12 @@ from fami_pixel.games.smb1 import (
     observation_from_state,
     read_smb1_state,
 )
-from fami_pixel.games.smb1.radar import decode_smb1_radar, read_smb1_radar
+from fami_pixel.games.smb1.radar import (
+    ADDR_PLAYER_STATUS,
+    ADDR_STAR_INVINCIBLE_TIMER,
+    decode_smb1_radar,
+    read_smb1_radar,
+)
 from fami_pixel.games.smb1.reward_beam import (
     buttons_for_chunk_frame,
     reward_collection_proven,
@@ -84,6 +89,24 @@ def _native_runner_for_current_root(core, *, current_frame: int) -> NativeSpecRu
     return runner
 
 
+def _capability_radar_from_ram(ram: bytes) -> dict[str, int]:
+    """Return only native capability fields needed for collection proof.
+
+    V25 decodes the full scene radar after every debugger-stepped frame because
+    the live API exposes state incrementally. V36 already owns a coherent 2 KiB
+    RAM witness at every exact boundary. Collection proof depends only on native
+    player status / Star timer (1-Up remains intentionally unproven), so decoding
+    terrain, enemy slots, and block buffers on all 32 speculative witnesses adds
+    Python overhead without changing policy semantics. Full radar is decoded once
+    at the semantic stop witness for final enemy-clearance/ranking evidence.
+    """
+
+    return {
+        "player_status": int(ram[ADDR_PLAYER_STATUS]),
+        "star_invincible_timer": int(ram[ADDR_STAR_INVINCIBLE_TIMER]),
+    }
+
+
 def _evaluate_native_reward_chunk(
     runner: NativeSpecRunner,
     chunk,
@@ -118,7 +141,6 @@ def _evaluate_native_reward_chunk(
 
     previous = root_observation
     current = previous
-    radar = dict(root_radar)
     died = False
     won = False
     collected = False
@@ -130,10 +152,6 @@ def _evaluate_native_reward_chunk(
         frames += 1
         state = decode_smb1_state(witness.ram)
         current = observation_from_state(int(witness.frame_count), state)
-        radar = decode_smb1_radar(
-            witness.ram,
-            player_x=int(current.mario_x_abs),
-        ).to_payload()
         events = derive_game_events(previous, current)
         died = any(event.kind == GameEventType.DIED for event in events)
         won = any(event.kind == GameEventType.LEVEL_COMPLETED for event in events)
@@ -141,7 +159,7 @@ def _evaluate_native_reward_chunk(
             target_type,
             baseline_player_status=baseline_status,
             baseline_star_timer=baseline_timer,
-            radar=radar,
+            radar=_capability_radar_from_ram(witness.ram),
         )
         stop_ram = witness.ram
         stop_controller = int(witness.controller)
@@ -152,6 +170,12 @@ def _evaluate_native_reward_chunk(
     if stop_ram is None:
         raise RuntimeError("native reward schedule produced no usable witness")
 
+    # V25 only consumes the radar corresponding to the semantic stop endpoint
+    # for target tracking and final ranking. Decode that same endpoint once.
+    radar = decode_smb1_radar(
+        stop_ram,
+        player_x=int(current.mario_x_abs),
+    ).to_payload()
     tracked = decode_active_reward_target(
         stop_ram,
         player_x=int(current.mario_x_abs),
