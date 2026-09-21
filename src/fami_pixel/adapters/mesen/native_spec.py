@@ -1,10 +1,10 @@
 """Exact in-process speculative schedule adapter for the fami-pixel Mesen fork.
 
-The live authority emulator remains untouched while the fork-owned native
-speculative instance restores a current-root state and executes variable-input
-schedules at the same debugger PPU-period boundaries used by the authoritative
-one-frame path.  The adapter deliberately exposes machine witnesses only; SMB1
-reward/death/ranking semantics stay in the game layer.
+The fork-owned speculative instance restores a serializable live decision root
+and executes variable-input schedules at the same debugger PPU-period
+boundaries used by the authoritative one-frame path.  The adapter deliberately
+exposes machine witnesses only; SMB1 reward/death/ranking semantics stay in the
+game layer.
 """
 
 from __future__ import annotations
@@ -23,6 +23,8 @@ NATIVE_SPEC_EXPORTS: tuple[str, ...] = (
     "FamiPixelSpecCaptureRootFromLive",
     "FamiPixelSpecResetToRoot",
     "FamiPixelSpecRunSchedule",
+    "FamiPixelSpecGetNesControllerState",
+    "FamiPixelSpecReadNesInternalRam",
     "FamiPixelSpecGetFrameCount",
     "FamiPixelSpecRelease",
 )
@@ -41,8 +43,8 @@ class NativeSpecRunner:
     """Persistent native speculative instance attached to one live ``MesenCore``.
 
     The underlying Mesen fork owns the speculative ``Emulator`` instance.  This
-    Python object binds its ABI, controls current-root capture/reset, and returns
-    coherent per-boundary RAM/controller/frame witnesses.
+    Python object binds its ABI, controls serializable root capture/reset, and
+    returns coherent RAM/controller/frame witnesses.
     """
 
     def __init__(self, core: MesenCore) -> None:
@@ -83,6 +85,18 @@ class NativeSpecRunner:
         ]
         self._run_schedule.restype = ctypes.c_int32
 
+        self._controller = dll.FamiPixelSpecGetNesControllerState
+        self._controller.argtypes = [ctypes.c_uint32]
+        self._controller.restype = ctypes.c_int32
+
+        self._read_ram = dll.FamiPixelSpecReadNesInternalRam
+        self._read_ram.argtypes = [
+            ctypes.c_uint32,
+            ctypes.POINTER(ctypes.c_uint8),
+            ctypes.c_uint32,
+        ]
+        self._read_ram.restype = ctypes.c_int32
+
         self._frame_count = dll.FamiPixelSpecGetFrameCount
         self._frame_count.argtypes = []
         self._frame_count.restype = ctypes.c_uint32
@@ -104,7 +118,7 @@ class NativeSpecRunner:
         raise MesenLoadError(f"{name} failed ({value}: {detail}).")
 
     def initialize_from_live(self) -> None:
-        """Create the native speculative emulator from the current live root."""
+        """Create the native speculative emulator from the live serializable root."""
 
         self._check(
             "FamiPixelSpecInitFromLive",
@@ -119,7 +133,14 @@ class NativeSpecRunner:
         self._initialized = True
 
     def capture_root_from_live(self) -> None:
-        """Replace the cached speculative decision root with the live current root."""
+        """Replace the cached speculative root with the live serializable root.
+
+        Mesen's save-state lock may settle an already paused PPU-cycle boundary
+        forward to the next safe CPU instruction boundary before serialization.
+        Callers that require strict provenance must therefore treat the state
+        *after* this call as the canonical decision root and re-read live
+        observations from that root.
+        """
 
         if not self._initialized:
             raise MesenLoadError("initialize_from_live() must be called before root capture")
@@ -152,6 +173,33 @@ class NativeSpecRunner:
         if not self._initialized:
             raise MesenLoadError("initialize_from_live() must be called before frame_count()")
         return int(self._frame_count())
+
+    def controller(self, port: int = 0) -> int:
+        if not self._initialized:
+            raise MesenLoadError("initialize_from_live() must be called before controller()")
+        if int(port) not in (0, 1):
+            raise ValueError("port must be 0 or 1")
+        value = int(self._controller(int(port)))
+        if value < 0:
+            raise MesenLoadError("speculative NES controller is unavailable")
+        return value
+
+    def ram(self) -> bytes:
+        """Return the complete speculative 2 KiB NES internal RAM image."""
+
+        if not self._initialized:
+            raise MesenLoadError("initialize_from_live() must be called before ram()")
+        buffer = (ctypes.c_uint8 * NES_INTERNAL_RAM_SIZE)()
+        self._check(
+            "FamiPixelSpecReadNesInternalRam",
+            self._read_ram(0, buffer, NES_INTERNAL_RAM_SIZE),
+            {
+                1: "speculative runner unavailable",
+                2: "invalid NES internal-RAM range",
+                3: "output pointer unavailable",
+            },
+        )
+        return bytes(buffer)
 
     def run_schedule(
         self,
