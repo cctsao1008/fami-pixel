@@ -5,6 +5,10 @@ import sys
 
 
 def _load_v27():
+    for name in tuple(sys.modules):
+        if name.startswith("mesen_smb_checkpoint_planner"):
+            sys.modules.pop(name, None)
+
     examples = (Path(__file__).resolve().parents[1] / "examples").resolve()
     sys.path.insert(0, str(examples))
     try:
@@ -57,4 +61,5 @@ def test_v27_async_contract_keeps_branch_proofs_and_records_authority_actions():
     assert "validate_branch_proof" in inspect.getsource(v27._lineage_valid_proofs)
     assert 'result["root_frame"] = source_root_frame' in selector_source
     assert 'result["age"] = source_age' in selector_source
-    assert "_AUTHORITY_ACTION_LEDGER.record" in authority_source
+    assert "authority_action_recording_layer(_AUTHORITY_ACTION_LEDGER)" in authority_source
+    assert "with _AUTHORITY_RUNTIME_SCOPE.controller_layer(" in authority_source
