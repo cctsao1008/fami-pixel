@@ -20,9 +20,11 @@ Mesen save-state capture has one important boundary rule: a PPU-cycle debugger
 pause can be mid CPU instruction, while a resumable save-state root must be at a
 safe CPU instruction boundary. Mesen's AcquireLock()/DebugBreakHelper settles
 such a paused root to the next instruction boundary before serializing it. V36
-therefore treats the *post-capture* state as the canonical decision root,
-verifies that the speculative clone matches that root byte-for-byte, and re-reads
-all SMB semantics from the canonical root before evaluating candidates.
+therefore treats the *post-capture* state as the canonical machine root and
+verifies that the speculative clone matches that root byte-for-byte. Policy
+routing and collection baselines continue to use the pre-capture live COLLECT
+request, matching V35; canonical state/radar are used for machine observation,
+fallback evidence, and endpoint ranking.
 
 Only the transition substrate changes. SMB1 decoding, reward proof, and ranking
 remain in fami-pixel rather than moving into Mesen.
@@ -298,8 +300,6 @@ def _sync_native_star_plan_untracked(
     root_observation = observation_from_state(root_frame, root_state)
     root_x = int(root_observation.mario_x_abs)
     root_radar = read_smb1_radar(core, player_x=root_x).to_payload()
-    if v35._COLLECT_PROGRESS_CONTROL.target_type(root_radar) != "star":
-        return None
 
     best_chunk = None
     best_outcome = None
@@ -314,7 +314,7 @@ def _sync_native_star_plan_untracked(
             root_observation=root_observation,
             root_radar=root_radar,
             target_type="star",
-            request_radar=root_radar,
+            request_radar=dict(live_radar or {}),
         )
         safe = not bool(outcome["died"])
         key = (
@@ -401,7 +401,7 @@ def _sync_native_star_plan_untracked(
             f"collect-native-exact-current-root[star,{candidate},root:{root_frame},"
             f"proof:{int(best_outcome['frames'])}f]"
         ),
-        "live_radar": dict(root_radar),
+        "live_radar": dict(live_radar or {}),
         "sync_collect_engine": "native-exact-boundary",
         "sync_collect_root_settled": root_settled,
         "sync_collect_root_settlement_first_difference": settlement_offset,
