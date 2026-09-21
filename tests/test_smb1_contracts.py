@@ -1,5 +1,6 @@
 import pytest
 
+import fami_pixel.games.smb1.state as smb1_state_module
 from fami_pixel.adapters.mesen import NES_A, NES_B, NES_LEFT, NES_RIGHT
 from fami_pixel.games.smb1 import (
     ActionCommand,
@@ -27,6 +28,9 @@ def _state() -> Smb1State:
         player_state=0,
         player_x_speed=0x18,
         player_y_speed=0,
+        player_y_move_force=0x44,
+        vertical_force=0x05,
+        vertical_force_down=0x07,
         saved_joypad1=0,
     )
 
@@ -47,6 +51,9 @@ def _observation(frame_id: int, *, x: int, state: int, y: int = 0xB0, engine: in
         player_state=state,
         player_x_speed=source.player_x_speed,
         player_y_speed=source.player_y_speed,
+        player_y_move_force=source.player_y_move_force,
+        vertical_force=source.vertical_force,
+        vertical_force_down=source.vertical_force_down,
         saved_joypad1=source.saved_joypad1,
     )
     return observation_from_state(frame_id, source)
@@ -77,6 +84,32 @@ def test_action_command_rejects_nonpositive_duration() -> None:
         ActionCommand(Smb1Action.NOOP, 0)
 
 
+def test_state_decoder_reads_vertical_integrator_bytes(monkeypatch) -> None:
+    values = {
+        smb1_state_module.ADDR_PLAYER_Y_MOVE_FORCE: 0xA3,
+        smb1_state_module.ADDR_VERTICAL_FORCE: 0x05,
+        smb1_state_module.ADDR_VERTICAL_FORCE_DOWN: 0x07,
+    }
+    addresses = []
+
+    def fake_read(_core, address: int) -> int:
+        addresses.append(address)
+        return values.get(address, 0)
+
+    monkeypatch.setattr(smb1_state_module, "read_nes_cpu_memory", fake_read)
+    state = smb1_state_module.read_smb1_state(object())
+
+    assert smb1_state_module.ADDR_PLAYER_Y_MOVE_FORCE == 0x0433
+    assert smb1_state_module.ADDR_VERTICAL_FORCE == 0x0709
+    assert smb1_state_module.ADDR_VERTICAL_FORCE_DOWN == 0x070A
+    assert state.player_y_move_force == 0xA3
+    assert state.vertical_force == 0x05
+    assert state.vertical_force_down == 0x07
+    assert smb1_state_module.ADDR_PLAYER_Y_MOVE_FORCE in addresses
+    assert smb1_state_module.ADDR_VERTICAL_FORCE in addresses
+    assert smb1_state_module.ADDR_VERTICAL_FORCE_DOWN in addresses
+
+
 def test_observation_projects_authoritative_state() -> None:
     observation = observation_from_state(196, _state())
     assert observation.native_frame_id == 196
@@ -86,6 +119,9 @@ def test_observation_projects_authoritative_state() -> None:
     assert observation.mario_x_abs == 40
     assert observation.mario_y == 0xB0
     assert observation.player_state == 0
+    assert observation.player_y_move_force == 0x44
+    assert observation.vertical_force == 0x05
+    assert observation.vertical_force_down == 0x07
     assert observation.raw_joypad == 0
     assert observation.is_player_control
 
