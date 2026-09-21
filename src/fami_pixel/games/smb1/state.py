@@ -20,7 +20,10 @@ ADDR_PLAYER_X = 0x0086
 ADDR_PLAYER_Y_SPEED = 0x009F
 ADDR_PLAYER_Y_HIGH = 0x00B5
 ADDR_PLAYER_Y = 0x00CE
+ADDR_PLAYER_Y_MOVE_FORCE = 0x0433
 ADDR_SAVED_JOYPAD1 = 0x06FC
+ADDR_VERTICAL_FORCE = 0x0709
+ADDR_VERTICAL_FORCE_DOWN = 0x070A
 ADDR_OPER_MODE = 0x0770
 ADDR_OPER_MODE_TASK = 0x0772
 ADDR_LEVEL_NUMBER = 0x075C
@@ -46,6 +49,9 @@ class Smb1State:
     player_state: int
     player_x_speed: int
     player_y_speed: int
+    player_y_move_force: int
+    vertical_force: int
+    vertical_force_down: int
     saved_joypad1: int
 
     @property
@@ -68,7 +74,7 @@ class Smb1State:
 
 
 def read_smb1_state(core: MesenCore) -> Smb1State:
-    """Read the small SMB1 RAM surface needed by the M0 gameplay witness."""
+    """Read the small authoritative SMB1 RAM surface used by Fami."""
 
     read = lambda addr: read_nes_cpu_memory(core, addr)
     return Smb1State(
@@ -85,5 +91,8 @@ def read_smb1_state(core: MesenCore) -> Smb1State:
         player_state=read(ADDR_PLAYER_STATE),
         player_x_speed=read(ADDR_PLAYER_X_SPEED),
         player_y_speed=read(ADDR_PLAYER_Y_SPEED),
+        player_y_move_force=read(ADDR_PLAYER_Y_MOVE_FORCE),
+        vertical_force=read(ADDR_VERTICAL_FORCE),
+        vertical_force_down=read(ADDR_VERTICAL_FORCE_DOWN),
         saved_joypad1=read(ADDR_SAVED_JOYPAD1),
     )
