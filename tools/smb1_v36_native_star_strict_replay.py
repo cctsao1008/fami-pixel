@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
-"""Run the V36 Star replay with strict live-authority immutability checks.
+"""Run the V36 Star replay with strict canonical-root provenance checks.
 
-This wrapper hardens the end-to-end acceptance gate against a harness-specific
-race around scenario restore. ``Debugger::IsExecutionStopped()`` is not a strong
-parked-state predicate in Mesen: it is true either for an actual debugger stop or
-while the emulator thread is only transiently paused by an internal lock. The
-strict gate therefore uses the stronger debugger pause state exposed through
-``MesenCore.is_paused()`` (Debugger::_waitForBreakResume) before restoring the
-scenario root.
+Mesen's PPU-frame debugger stop can occur in the middle of a CPU instruction.
+A resumable save-state root cannot safely preserve that C++ instruction call
+stack, so Mesen's save-state lock deliberately settles the paused live machine
+to the next CPU instruction boundary before serialization.  That settlement may
+change RAM while the native frame counter remains unchanged.
 
-In addition to the outer decision guard, this probe now instruments the native
-speculation stages so any authority mutation is attributed to the first exact
-operation that caused it: live SMB reads, native root init/capture, root reset,
-or native schedule execution.
+This gate therefore distinguishes two phases:
+
+1. **root establishment** (`spec-init-from-live` / `spec-capture-root-from-live`)
+   may settle the live machine within the same native frame;
+2. **speculation** after the canonical root is established must leave live frame,
+   full 2 KiB NES RAM, controller state, and persistent debugger pause unchanged.
+
+The production V36 path independently verifies that the speculative root exactly
+matches the post-settlement live frame/RAM/controller state and re-reads SMB
+semantics from that canonical root before candidate evaluation.
 """
 
 from __future__ import annotations
@@ -44,6 +48,12 @@ class _AuthoritySnapshot:
     paused: bool
     controller: int
     ram: bytes
+
+
+_canonical_root: _AuthoritySnapshot | None = None
+_settlement_before: _AuthoritySnapshot | None = None
+_settlement_stage: str | None = None
+_reported_settlement = False
 
 
 def _snapshot(core) -> _AuthoritySnapshot:
@@ -78,13 +88,13 @@ def _assert_stage_unchanged(stage: str, before: _AuthoritySnapshot, after: _Auth
     if diff is not None:
         offset, lhs, rhs = diff
         raise RuntimeError(
-            "native V36 stage mutated live authority RAM: "
+            "native V36 stage mutated live authority RAM after canonical root: "
             f"stage={stage} first_difference=0x{offset:04X} "
             f"before=0x{lhs:02X} after=0x{rhs:02X} frame={before.frame}"
         )
     if after.controller != before.controller:
         raise RuntimeError(
-            "native V36 stage mutated live controller state: "
+            "native V36 stage mutated live controller state after canonical root: "
             f"stage={stage} before=0x{before.controller:02X} "
             f"after=0x{after.controller:02X} frame={before.frame}"
         )
@@ -95,6 +105,48 @@ def _guard_call(stage: str, core, func, *args, **kwargs):
     result = func(*args, **kwargs)
     after = _snapshot(core)
     _assert_stage_unchanged(stage, before, after)
+    return result
+
+
+def _establish_root_call(stage: str, core, func, *args, **kwargs):
+    """Allow only same-frame instruction-boundary settlement during root capture."""
+
+    global _canonical_root, _settlement_before, _settlement_stage, _reported_settlement
+
+    before = _snapshot(core)
+    if not before.paused:
+        raise RuntimeError(
+            f"native V36 root establishment started without persistent pause: stage={stage}"
+        )
+
+    result = func(*args, **kwargs)
+    after = _snapshot(core)
+
+    if not after.paused:
+        raise RuntimeError(
+            f"native V36 root establishment released persistent pause: stage={stage}"
+        )
+    if after.frame != before.frame:
+        raise RuntimeError(
+            "native V36 root establishment crossed a native frame: "
+            f"stage={stage} before={before.frame} after={after.frame}"
+        )
+
+    _canonical_root = after
+    _settlement_before = before
+    _settlement_stage = stage
+
+    diff = _first_ram_difference(before.ram, after.ram)
+    if diff is not None and not _reported_settlement:
+        offset, lhs, rhs = diff
+        print(
+            "RootSettle : "
+            f"stage={stage} frame={before.frame} first_difference=0x{offset:04X} "
+            f"before=0x{lhs:02X} after=0x{rhs:02X}",
+            flush=True,
+        )
+        _reported_settlement = True
+
     return result
 
 
@@ -160,7 +212,7 @@ def _strict_read_smb1_radar(core, *args, **kwargs):
 
 
 def _strict_runner_init(self, *args, **kwargs):
-    return _guard_call(
+    return _establish_root_call(
         "spec-init-from-live",
         self._core,
         _original_runner_init,
@@ -171,7 +223,7 @@ def _strict_runner_init(self, *args, **kwargs):
 
 
 def _strict_runner_capture(self, *args, **kwargs):
-    return _guard_call(
+    return _establish_root_call(
         "spec-capture-root-from-live",
         self._core,
         _original_runner_capture,
@@ -205,15 +257,44 @@ def _strict_runner_schedule(self, buttons, *args, **kwargs):
 
 
 def _strict_native_plan(core, *args, **kwargs):
-    """Reject and localize any live-authority mutation during speculation."""
+    """Require only root settlement to touch authority; speculation stays immutable."""
+
+    global _canonical_root, _settlement_before, _settlement_stage
 
     if not core.is_paused():
         raise RuntimeError("native V36 decision started without a persistent debugger pause")
 
-    before = _snapshot(core)
+    decision_before = _snapshot(core)
+    _canonical_root = None
+    _settlement_before = None
+    _settlement_stage = None
+
     result = _original_native_plan(core, *args, **kwargs)
-    after = _snapshot(core)
-    _assert_stage_unchanged("whole-native-decision", before, after)
+    decision_after = _snapshot(core)
+
+    canonical = _canonical_root
+    if canonical is None:
+        _assert_stage_unchanged("whole-native-decision-no-root-capture", decision_before, decision_after)
+        return result
+
+    if canonical.frame != decision_before.frame:
+        raise RuntimeError(
+            "native V36 canonical root changed decision frame: "
+            f"before={decision_before.frame} canonical={canonical.frame} "
+            f"stage={_settlement_stage}"
+        )
+
+    # Once root establishment returns, every subsequent native stage must leave
+    # authority exactly at that canonical root. The stage wrappers localize any
+    # earlier violation; this final comparison is a belt-and-suspenders gate.
+    _assert_stage_unchanged("post-canonical-whole-decision", canonical, decision_after)
+
+    if result is not None and int(result.get("root_frame", canonical.frame)) != canonical.frame:
+        raise RuntimeError(
+            "native V36 plan metadata does not name the canonical root: "
+            f"plan={result.get('root_frame')} canonical={canonical.frame}"
+        )
+
     return result
 
 
