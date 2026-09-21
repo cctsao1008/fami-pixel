@@ -4,8 +4,8 @@
 V35 proved the synchronous current-root Star policy but evaluated every 4-frame
 candidate by repeatedly restoring and stepping the live authority emulator. The
 Mesen fork now exposes one separate threadless speculative emulator that can
-restore the same current root and execute variable-input schedules at the exact
-same debugger PPU-period boundaries as the authoritative path.
+restore the same serializable root and execute variable-input schedules at the
+exact same debugger PPU-period boundaries as the authoritative path.
 
 V36 keeps V35 policy semantics unchanged:
 
@@ -13,8 +13,16 @@ V36 keeps V35 policy semantics unchanged:
 * Star COLLECT uses the same eight V25 4-frame chunks and ranking.
 * Death, level-complete, and native collection proof are evaluated after every
   exact frame witness; extra native execution after an early-stop witness is
-  ignored semantically and never mutates live authority.
+  ignored semantically.
 * Native runner failure falls back to V35's existing live-core exact path.
+
+Mesen save-state capture has one important boundary rule: a PPU-cycle debugger
+pause can be mid CPU instruction, while a resumable save-state root must be at a
+safe CPU instruction boundary. Mesen's AcquireLock()/DebugBreakHelper settles
+such a paused root to the next instruction boundary before serializing it. V36
+therefore treats the *post-capture* state as the canonical decision root,
+verifies that the speculative clone matches that root byte-for-byte, and re-reads
+all SMB semantics from the canonical root before evaluating candidates.
 
 Only the transition substrate changes. SMB1 decoding, reward proof, and ranking
 remain in fami-pixel rather than moving into Mesen.
@@ -24,7 +32,12 @@ from __future__ import annotations
 
 import time
 
-from fami_pixel.adapters.mesen import MesenLoadError, NativeSpecRunner
+from fami_pixel.adapters.mesen import (
+    MesenLoadError,
+    NativeSpecRunner,
+    get_nes_controller_state,
+    read_nes_internal_ram,
+)
 from fami_pixel.games.smb1 import (
     GameEventType,
     decode_smb1_state,
@@ -66,10 +79,43 @@ def _release_native_spec_runner() -> None:
             pass
 
 
-def _native_runner_for_current_root(core, *, current_frame: int) -> NativeSpecRunner:
-    """Return one persistent spec runner reset to the exact live current root."""
+def _first_difference(before: bytes, after: bytes) -> int | None:
+    return next(
+        (
+            index
+            for index, (left, right) in enumerate(zip(before, after))
+            if left != right
+        ),
+        None,
+    )
+
+
+def _native_runner_for_current_root(
+    core,
+    *,
+    current_frame: int,
+) -> tuple[NativeSpecRunner, int, int | None]:
+    """Establish and verify one canonical serializable decision root.
+
+    ``FamiPixelSpecInitFromLive`` / ``CaptureRootFromLive`` serialize under
+    Mesen's safe save-state lock. If the authority is paused in the middle of a
+    CPU instruction, that lock may finish the instruction before serialization.
+    This is root *establishment*, not speculative rollout. The post-capture
+    state is authoritative for the decision and must still be on the same native
+    frame. Once established, live and speculative frame/RAM/controller witnesses
+    must be identical.
+    """
 
     global _NATIVE_SPEC_RUNNER, _NATIVE_SPEC_CORE
+
+    requested_frame = int(current_frame)
+    before_frame = int(core.frame_count())
+    before_ram = read_nes_internal_ram(core)
+    if before_frame != requested_frame:
+        raise MesenLoadError(
+            "native speculative pre-capture frame mismatch: "
+            f"requested={requested_frame} live={before_frame}"
+        )
 
     if _NATIVE_SPEC_RUNNER is None or _NATIVE_SPEC_CORE is not core:
         _release_native_spec_runner()
@@ -81,12 +127,39 @@ def _native_runner_for_current_root(core, *, current_frame: int) -> NativeSpecRu
         runner = _NATIVE_SPEC_RUNNER
         runner.capture_root_from_live()
 
-    if int(runner.frame_count()) != int(current_frame):
+    canonical_frame = int(core.frame_count())
+    if canonical_frame != requested_frame:
         raise MesenLoadError(
-            "native speculative root frame mismatch: "
-            f"live={int(current_frame)} spec={int(runner.frame_count())}"
+            "native root settlement crossed a frame boundary: "
+            f"requested={requested_frame} canonical={canonical_frame}"
         )
-    return runner
+
+    live_ram = read_nes_internal_ram(core)
+    spec_ram = runner.ram()
+    if live_ram != spec_ram:
+        first = _first_difference(live_ram, spec_ram)
+        detail = "none" if first is None else f"0x{first:04X}"
+        raise MesenLoadError(
+            "native speculative root RAM differs from canonical live root: "
+            f"first_difference={detail}"
+        )
+
+    spec_frame = int(runner.frame_count())
+    if spec_frame != canonical_frame:
+        raise MesenLoadError(
+            "native speculative root frame differs from canonical live root: "
+            f"live={canonical_frame} spec={spec_frame}"
+        )
+
+    live_controller = int(get_nes_controller_state(core, 0))
+    spec_controller = int(runner.controller(0))
+    if live_controller != spec_controller:
+        raise MesenLoadError(
+            "native speculative root controller differs from canonical live root: "
+            f"live=0x{live_controller:02X} spec=0x{spec_controller:02X}"
+        )
+
+    return runner, canonical_frame, _first_difference(before_ram, live_ram)
 
 
 def _capability_radar_from_ram(ram: bytes) -> dict[str, int]:
@@ -170,8 +243,6 @@ def _evaluate_native_reward_chunk(
     if stop_ram is None:
         raise RuntimeError("native reward schedule produced no usable witness")
 
-    # V25 only consumes the radar corresponding to the semantic stop endpoint
-    # for target tracking and final ranking. Decode that same endpoint once.
     radar = decode_smb1_radar(
         stop_ram,
         player_x=int(current.mario_x_abs),
@@ -214,18 +285,21 @@ def _sync_native_star_plan_untracked(
 ) -> dict | None:
     """Evaluate V35's Star vocabulary on the separate native speculative core."""
 
-    target_type = v35._COLLECT_PROGRESS_CONTROL.target_type(live_radar)
-    if target_type != "star":
+    if v35._COLLECT_PROGRESS_CONTROL.target_type(live_radar) != "star":
         return None
 
     started = time.perf_counter()
-    root_frame = int(current_frame)
+    runner, root_frame, settlement_first_difference = _native_runner_for_current_root(
+        core,
+        current_frame=int(current_frame),
+    )
+
     root_state = read_smb1_state(core)
     root_observation = observation_from_state(root_frame, root_state)
     root_x = int(root_observation.mario_x_abs)
     root_radar = read_smb1_radar(core, player_x=root_x).to_payload()
-
-    runner = _native_runner_for_current_root(core, current_frame=root_frame)
+    if v35._COLLECT_PROGRESS_CONTROL.target_type(root_radar) != "star":
+        return None
 
     best_chunk = None
     best_outcome = None
@@ -240,7 +314,7 @@ def _sync_native_star_plan_untracked(
             root_observation=root_observation,
             root_radar=root_radar,
             target_type="star",
-            request_radar=dict(live_radar or {}),
+            request_radar=root_radar,
         )
         safe = not bool(outcome["died"])
         key = (
@@ -264,6 +338,13 @@ def _sync_native_star_plan_untracked(
             best_outcome = outcome
 
     total_ms = (time.perf_counter() - started) * 1000.0
+    root_settled = settlement_first_difference is not None
+    settlement_offset = (
+        None
+        if settlement_first_difference is None
+        else int(settlement_first_difference)
+    )
+
     if best_chunk is None or best_outcome is None:
         v35.v23._latest_forward_meta = {
             "forward_model_status": "native-sync-star-no-safe-prefix",
@@ -272,6 +353,8 @@ def _sync_native_star_plan_untracked(
             "forward_model_source_frame": root_frame,
             "forward_model_source_age_frames": 0,
             "sync_collect_engine": "native-exact-boundary",
+            "sync_collect_root_settled": root_settled,
+            "sync_collect_root_settlement_first_difference": settlement_offset,
             "sync_collect_candidates": candidate_rows,
             "sync_collect_compute_ms": round(total_ms, 3),
         }
@@ -318,8 +401,10 @@ def _sync_native_star_plan_untracked(
             f"collect-native-exact-current-root[star,{candidate},root:{root_frame},"
             f"proof:{int(best_outcome['frames'])}f]"
         ),
-        "live_radar": dict(live_radar or {}),
+        "live_radar": dict(root_radar),
         "sync_collect_engine": "native-exact-boundary",
+        "sync_collect_root_settled": root_settled,
+        "sync_collect_root_settlement_first_difference": settlement_offset,
         "sync_collect_candidates": candidate_rows,
     }
 
@@ -336,6 +421,8 @@ def _sync_native_star_plan_untracked(
         "forward_model_reward_collected": collected,
         "reward_target_dx": result["reward_target_dx"],
         "sync_collect_engine": "native-exact-boundary",
+        "sync_collect_root_settled": root_settled,
+        "sync_collect_root_settlement_first_difference": settlement_offset,
         "sync_collect_candidates_evaluated": len(candidate_rows),
         "sync_collect_compute_ms": round(total_ms, 3),
         "sync_collect_candidates": candidate_rows,
@@ -390,8 +477,6 @@ def _best_collect_or_progress(
                 "native_spec_error": str(exc),
             }
 
-    # This preserves V35's exact synchronous live-core Star path as the failure
-    # fallback, and its stable COLLECT/PROGRESS composition for every other case.
     return v35._best_collect_or_progress(
         response_paths,
         current_frame=current_frame,
@@ -407,7 +492,8 @@ def authority_main(args) -> int:
     _release_native_spec_runner()
     v35.v11._log(
         "Planner V36: native exact-boundary current-root Star MPC enabled | "
-        "persistent in-process speculative Mesen; V35 live-core exact fallback retained"
+        "persistent in-process speculative Mesen; serializable-root settlement; "
+        "V35 live-core exact fallback retained"
     )
     try:
         return v35.authority_main(args)
