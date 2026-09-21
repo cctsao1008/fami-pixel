@@ -191,6 +191,86 @@ def test_native_reward_evaluator_decodes_full_radar_only_at_semantic_endpoint(mo
     assert calls[0][0] == witnesses[-1].ram
 
 
+def test_v36_preserves_sticky_star_request_across_canonical_root_settlement(monkeypatch):
+    v36 = _load_v36()
+    root_ram = _ram(smb_frame=10)
+    root_state = decode_smb1_state(root_ram)
+    root_observation = observation_from_state(100, root_state)
+    live_radar = {
+        "collect_target_type": "star",
+        "nearest_reward_type": None,
+        "player_status": 1,
+        "star_invincible_timer": 0,
+    }
+    canonical_radar = {
+        "collect_target_type": None,
+        "nearest_reward_type": None,
+        "player_status": 1,
+        "star_invincible_timer": 0,
+    }
+    sentinel_runner = object()
+    seen = {}
+
+    class _RadarPayload:
+        def to_payload(self):
+            return dict(canonical_radar)
+
+    monkeypatch.setattr(
+        v36,
+        "_native_runner_for_current_root",
+        lambda core, *, current_frame: (sentinel_runner, int(current_frame), 0x0248),
+    )
+    monkeypatch.setattr(v36, "read_smb1_state", lambda core: root_state)
+    monkeypatch.setattr(
+        v36,
+        "read_smb1_radar",
+        lambda core, *, player_x: _RadarPayload(),
+    )
+    chunk = REWARD_BEAM_CHUNKS_WITH_HOLD[0]
+    monkeypatch.setattr(v36.v35.v25, "REWARD_BEAM_CHUNKS_WITH_HOLD", (chunk,))
+
+    def fake_eval(
+        runner,
+        candidate,
+        *,
+        root_observation,
+        root_radar,
+        target_type,
+        request_radar,
+    ):
+        assert runner is sentinel_runner
+        assert candidate is chunk
+        assert target_type == "star"
+        assert root_radar == canonical_radar
+        seen["request_radar"] = dict(request_radar)
+        return {
+            "died": False,
+            "won": False,
+            "collected": False,
+            "frames": 4,
+            "observation": root_observation,
+            "radar": canonical_radar,
+            "target": None,
+            "reward_key": (0, 0, 0, 0),
+            "nearest_enemy_dx": None,
+            "controller": 0,
+        }
+
+    monkeypatch.setattr(v36, "_evaluate_native_reward_chunk", fake_eval)
+
+    result = v36._sync_native_star_plan_untracked(
+        object(),
+        current_frame=100,
+        live_radar=live_radar,
+    )
+
+    assert result is not None
+    assert seen["request_radar"] == live_radar
+    assert result["live_radar"] == live_radar
+    assert result["sync_collect_root_settled"] is True
+    assert result["sync_collect_root_settlement_first_difference"] == 0x0248
+
+
 def test_v36_falls_back_to_v35_exact_live_core_path_on_native_failure(monkeypatch):
     v36 = _load_v36()
     sentinel = {"candidate": "legacy-v35-fallback"}
