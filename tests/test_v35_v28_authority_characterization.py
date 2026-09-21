@@ -8,6 +8,10 @@ from fami_pixel.control import enrich_checkpoint_request
 
 
 def _load_v35():
+    for name in tuple(sys.modules):
+        if name.startswith("mesen_smb_checkpoint_planner"):
+            sys.modules.pop(name, None)
+
     examples = (Path(__file__).resolve().parents[1] / "examples").resolve()
     sys.path.insert(0, str(examples))
     try:
@@ -49,7 +53,9 @@ def test_current_v35_extracts_v28_runtime_and_keeps_scope_around_lower_authority
     assert "enricher = _v28_checkpoint_request_enricher()" in source
     assert "with installed_checkpoint_request_enricher(enricher):" in source
     assert "_V23_BOOTSTRAP_SETUP_PLAN.setup_run_state(args)" in source
-    assert "return _V17.authority_main(args)" in source
+    assert "live_control = _build_live_authority_control()" in source
+    assert "return live_control.run(args)" in source
+    assert "return _V17.authority_main(args)" not in source
     assert "return v23.authority_main(args)" not in source
     assert "return v26._BASE_V25_AUTHORITY(args)" not in source
     assert "return v26.authority_main(args)" not in source
@@ -104,20 +110,21 @@ def test_v35_v28_enricher_scope_is_bounded_and_uses_same_authority_plan_memory(
 
     observed = {}
 
-    def delegated(_args):
-        # Current-run V28 memory must be empty before lower authority starts.
-        assert memory.snapshot is None
-        assert memory.remember(
-            {
-                "root_frame": 100,
-                "candidate": "authority-plan",
-                "schedule": [{"buttons": 0x80, "frames": 24}],
-            }
-        )
-        observed.update(enrich_checkpoint_request({"frame": 100, "generation": 7}))
-        return 28
+    class LiveControl:
+        def run(self, _args):
+            # Current-run V28 memory must be empty before the stable loop starts.
+            assert memory.snapshot is None
+            assert memory.remember(
+                {
+                    "root_frame": 100,
+                    "candidate": "authority-plan",
+                    "schedule": [{"buttons": 0x80, "frames": 24}],
+                }
+            )
+            observed.update(enrich_checkpoint_request({"frame": 100, "generation": 7}))
+            return 28
 
-    monkeypatch.setattr(v35._V17, "authority_main", delegated)
+    monkeypatch.setattr(v35, "_build_live_authority_control", lambda: LiveControl())
 
     args = SimpleNamespace(
         step_timeout=1.0,
