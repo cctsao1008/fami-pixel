@@ -10,6 +10,7 @@ from fami_pixel.integration import (
     BoundedAction,
     CommandChunk,
     LiveConsequence,
+    LiveExecutionFrameSample,
     ShadowRollout,
     Smb1ExternalSubstratePort,
 )
@@ -40,6 +41,9 @@ def fake_observer(core: FakeCore, frame: int) -> Smb1Observation:
         player_state=0,
         player_x_speed=1,
         player_y_speed=0,
+        player_y_move_force=0xE0,
+        vertical_force=0x20,
+        vertical_force_down=0x70,
         raw_joypad=0,
         oper_mode=1,
         oper_mode_task=0,
@@ -67,7 +71,7 @@ def radar_snapshot(player_x: int) -> Smb1RadarSnapshot:
     )
 
 
-def make_port(*, rollout_provider=None, action_proposer=None):
+def make_port(*, rollout_provider=None, action_proposer=None, execution_frame_observer=None):
     core = FakeCore()
     writes: list[tuple[int, int]] = []
     radar_reads: list[int] = []
@@ -88,6 +92,7 @@ def make_port(*, rollout_provider=None, action_proposer=None):
         button_writer=writer,
         rollout_provider=rollout_provider,
         action_proposer=action_proposer,
+        execution_frame_observer=execution_frame_observer,
     )
     return core, writes, radar_reads, port
 
@@ -166,6 +171,7 @@ def test_f4_live_consequence_binds_execution_and_refreshes_post_radar():
     assert consequence.post_observation.radar.player_x == 103
     assert "frame=103" in consequence.post_state_identity
     assert consequence.evidence_kind == "LIVE_CONSEQUENCE"
+    # Historical path remains chunk-stepped when no frame observer is configured.
     assert core.steps == [(2, 25), (1, 25)]
     assert writes[-1] == (0, 0)  # explicit release without extra frame
 
@@ -243,3 +249,61 @@ def test_f8_integration_module_has_no_lsmm_dependency_import():
         if line.lstrip().startswith(("import ", "from "))
     ]
     assert not any("lsmm" in line for line in import_lines)
+
+
+def test_execution_frame_observer_receives_contiguous_passive_samples():
+    samples: list[LiveExecutionFrameSample] = []
+    core, writes, radar_reads, port = make_port(execution_frame_observer=samples.append)
+    observation = port.observe()
+    action = bounded_action(observation.observation_id)
+
+    trace = port.execute_bounded(action)
+
+    assert trace.requested_frames == 3
+    assert trace.realized_frames == 3
+    assert core.steps == [(1, 25), (1, 25), (1, 25)]
+    assert [sample.frame_offset for sample in samples] == [1, 2, 3]
+    assert [sample.chunk_index for sample in samples] == [0, 0, 1]
+    assert [sample.chunk_frame_offset for sample in samples] == [1, 2, 1]
+    assert [sample.applied_buttons for sample in samples] == [0x81, 0x81, 0x80]
+    assert [sample.native_frame_id for sample in samples] == [101, 102, 103]
+    assert all(sample.action_id == action.action_id for sample in samples)
+    assert all(sample.source_identity == "mesen:test-commit" for sample in samples)
+    assert [sample.smb1.native_frame_id for sample in samples] == [101, 102, 103]
+    assert all(sample.smb1.player_y_move_force == 0xE0 for sample in samples)
+    assert all(sample.smb1.vertical_force == 0x20 for sample in samples)
+    assert all(sample.smb1.vertical_force_down == 0x70 for sample in samples)
+    # Internal tracing reads only SMB1 machine state. Radar remains pre/post only.
+    assert radar_reads == [100, 103]
+    assert writes[-1] == (0, 0)
+
+
+def test_execution_frame_observer_has_no_control_return_path():
+    returned = []
+
+    def passive(sample):
+        returned.append(sample.frame_offset)
+        return {"ignored": "not authority"}
+
+    core, writes, radar_reads, port = make_port(execution_frame_observer=passive)
+    observation = port.observe()
+    trace = port.execute_bounded(bounded_action(observation.observation_id))
+
+    assert returned == [1, 2, 3]
+    assert trace.realized_frames == 3
+    assert writes == [(0, 0x81), (0, 0x80), (0, 0)]
+
+
+def test_live_execution_frame_sample_rejects_noncontiguous_metadata():
+    smb1 = fake_observer(FakeCore(), 101)
+    with pytest.raises(ValueError, match="offsets"):
+        LiveExecutionFrameSample(
+            source_identity="mesen:test",
+            action_id="action",
+            native_frame_id=101,
+            chunk_index=0,
+            frame_offset=0,
+            chunk_frame_offset=1,
+            applied_buttons=0,
+            smb1=smb1,
+        )
