@@ -6,6 +6,10 @@ from types import SimpleNamespace
 
 
 def _load_v35():
+    for name in tuple(sys.modules):
+        if name.startswith("mesen_smb_checkpoint_planner"):
+            sys.modules.pop(name, None)
+
     examples = (Path(__file__).resolve().parents[1] / "examples").resolve()
     sys.path.insert(0, str(examples))
     try:
@@ -63,7 +67,7 @@ def test_v30_proof_horizon_is_installed_before_v29_authority_delegate(monkeypatc
     assert calls[1] == ("delegate", 37)
 
 
-def test_current_v35_keeps_v30_setup_before_transferred_v29_through_v23_runtime():
+def test_current_v35_keeps_v30_setup_before_transferred_v29_through_stable_live_runtime():
     v35 = _load_v35()
     source = inspect.getsource(v35.authority_main)
 
@@ -77,7 +81,9 @@ def test_current_v35_keeps_v30_setup_before_transferred_v29_through_v23_runtime(
     assert '_AUTHORITY_RUN_RESET_PLAN.reset_named("v26-gap-commitment")' in source
     assert '_AUTHORITY_RUN_RESET_PLAN.reset_named("v25-live-objective")' in source
     assert "_V23_BOOTSTRAP_SETUP_PLAN.setup_run_state(args)" in source
-    assert "return _V17.authority_main(args)" in source
+    assert "live_control = _build_live_authority_control()" in source
+    assert "return live_control.run(args)" in source
+    assert "return _V17.authority_main(args)" not in source
     assert "return v23.authority_main(args)" not in source
     assert "return v26._BASE_V25_AUTHORITY(args)" not in source
     assert "return v26.authority_main(args)" not in source
@@ -115,11 +121,17 @@ def test_v35_stable_v30_setup_runs_before_transferred_lower_runtime(monkeypatch,
         ),
     )
 
-    def delegated(_args):
-        calls.append(("delegate", int(v35._V28.COLLECT_PROOF_HORIZON)))
-        return 17
+    def forbidden(_args):
+        raise AssertionError("historical V17 authority wrapper was invoked")
 
-    monkeypatch.setattr(v35._V17, "authority_main", delegated)
+    monkeypatch.setattr(v35._V17, "authority_main", forbidden)
+
+    class LiveControl:
+        def run(self, _args):
+            calls.append(("delegate", int(v35._V28.COLLECT_PROOF_HORIZON)))
+            return 17
+
+    monkeypatch.setattr(v35, "_build_live_authority_control", lambda: LiveControl())
 
     args = SimpleNamespace(
         step_timeout=1.0,
