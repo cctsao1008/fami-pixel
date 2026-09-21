@@ -84,6 +84,36 @@ class ShadowRollout:
 
 
 @dataclass(frozen=True)
+class LiveExecutionFrameSample:
+    source_identity: str
+    action_id: str
+    native_frame_id: int
+    chunk_index: int
+    frame_offset: int
+    chunk_frame_offset: int
+    applied_buttons: int
+    smb1: Smb1Observation
+    evidence_kind: str = "LIVE_EXECUTION_FRAME"
+    schema_version: str = "fami.external.live-execution-frame.v1"
+
+    def __post_init__(self) -> None:
+        if not self.source_identity or not self.action_id:
+            raise ValueError("frame sample source/action identity is required")
+        if self.native_frame_id < 0:
+            raise ValueError("native_frame_id must be non-negative")
+        if self.chunk_index < 0:
+            raise ValueError("chunk_index must be non-negative")
+        if self.frame_offset <= 0 or self.chunk_frame_offset <= 0:
+            raise ValueError("frame offsets must be positive")
+        if not 0 <= self.applied_buttons <= 0xFF:
+            raise ValueError("applied_buttons must fit in one NES controller byte")
+        if self.smb1.native_frame_id != self.native_frame_id:
+            raise ValueError("sample SMB1 frame must match native_frame_id")
+        if self.evidence_kind != "LIVE_EXECUTION_FRAME":
+            raise ValueError("LiveExecutionFrameSample evidence_kind is fixed")
+
+
+@dataclass(frozen=True)
 class LiveExecutionTrace:
     execution_id: str
     source_identity: str
@@ -129,6 +159,7 @@ RolloutProvider = Callable[[BoundedAction], ShadowRollout]
 ObservationReader = Callable[[MesenCore, int], Smb1Observation]
 RadarReader = Callable[[MesenCore, int], Smb1RadarSnapshot]
 ButtonWriter = Callable[[MesenCore, int, int], None]
+ExecutionFrameObserver = Callable[[LiveExecutionFrameSample], None]
 
 
 def _default_radar_reader(core: MesenCore, player_x: int) -> Smb1RadarSnapshot:
@@ -156,6 +187,7 @@ class Smb1ExternalSubstratePort:
         observation_reader: ObservationReader = read_smb1_observation,
         radar_reader: RadarReader = _default_radar_reader,
         button_writer: ButtonWriter = set_nes_controller_state,
+        execution_frame_observer: ExecutionFrameObserver | None = None,
     ) -> None:
         if not source_identity:
             raise ValueError("source_identity is required")
@@ -172,6 +204,7 @@ class Smb1ExternalSubstratePort:
         self._observation_reader = observation_reader
         self._radar_reader = radar_reader
         self._button_writer = button_writer
+        self._execution_frame_observer = execution_frame_observer
         self._last_observation: FamiObservation | None = None
 
     def observe(self) -> FamiObservation:
@@ -213,9 +246,35 @@ class Smb1ExternalSubstratePort:
 
         start_frame = pre.native_frame_id
         requested = sum(chunk.frames for chunk in action.chunks)
-        for chunk in action.chunks:
+        frame_offset = 0
+        for chunk_index, chunk in enumerate(action.chunks):
             self._button_writer(self._core, self._controller_port, chunk.buttons)
-            self._core.step_frame_sync(chunk.frames, self._timeout_ms)
+            if self._execution_frame_observer is None:
+                self._core.step_frame_sync(chunk.frames, self._timeout_ms)
+                frame_offset += chunk.frames
+                continue
+
+            for chunk_frame_offset in range(1, chunk.frames + 1):
+                self._core.step_frame_sync(1, self._timeout_ms)
+                frame_offset += 1
+                frame = int(self._core.frame_count())
+                smb1 = self._observation_reader(self._core, frame)
+                if int(self._core.frame_count()) != frame:
+                    raise RuntimeError(
+                        "authoritative frame advanced during execution frame observation"
+                    )
+                self._execution_frame_observer(
+                    LiveExecutionFrameSample(
+                        source_identity=self._source_identity,
+                        action_id=action.action_id,
+                        native_frame_id=frame,
+                        chunk_index=chunk_index,
+                        frame_offset=frame_offset,
+                        chunk_frame_offset=chunk_frame_offset,
+                        applied_buttons=chunk.buttons,
+                        smb1=smb1,
+                    )
+                )
 
         # Release after the bounded command without advancing another frame.
         self._button_writer(self._core, self._controller_port, 0)
@@ -224,6 +283,8 @@ class Smb1ExternalSubstratePort:
         realized = post.native_frame_id - start_frame
         if realized < 0:
             raise RuntimeError("authoritative frame counter moved backwards")
+        if frame_offset != requested:
+            raise RuntimeError("bounded execution frame accounting drifted")
 
         return LiveExecutionTrace(
             execution_id=f"fami-execution:{uuid4()}",
