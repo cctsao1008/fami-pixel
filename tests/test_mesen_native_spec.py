@@ -21,11 +21,16 @@ class _FakeDll:
     def __init__(self):
         self.calls = []
         self.frame = 100
+        self.controller = 0x82
+        self.ram = bytearray(NES_INTERNAL_RAM_SIZE)
+        self.ram[0x10] = 0x44
 
         self.FamiPixelSpecInitFromLive = _FakeFn(self._init)
         self.FamiPixelSpecCaptureRootFromLive = _FakeFn(self._capture)
         self.FamiPixelSpecResetToRoot = _FakeFn(self._reset)
         self.FamiPixelSpecRunSchedule = _FakeFn(self._run_schedule)
+        self.FamiPixelSpecGetNesControllerState = _FakeFn(self._controller)
+        self.FamiPixelSpecReadNesInternalRam = _FakeFn(self._read_ram)
         self.FamiPixelSpecGetFrameCount = _FakeFn(self._frame_count)
         self.FamiPixelSpecRelease = _FakeFn(self._release)
 
@@ -37,10 +42,21 @@ class _FakeDll:
     def _capture(self):
         self.calls.append("capture")
         self.frame = 200
+        self.ram[0x10] = 0x55
         return 0
 
     def _reset(self):
         self.calls.append("reset")
+        return 0
+
+    def _controller(self, port):
+        return self.controller if int(port) == 0 else 0
+
+    def _read_ram(self, address, output, length):
+        start = int(address)
+        count = int(length)
+        for index in range(count):
+            output[index] = self.ram[start + index]
         return 0
 
     def _frame_count(self):
@@ -92,6 +108,9 @@ def test_native_spec_runner_returns_exact_per_boundary_witnesses():
 
     runner.initialize_from_live()
     assert runner.frame_count() == 100
+    assert runner.controller(0) == 0x82
+    assert len(runner.ram()) == NES_INTERNAL_RAM_SIZE
+    assert runner.ram()[0x10] == 0x44
 
     runner.reset_to_root()
     witnesses = runner.run_schedule((0x82, 0x83, 0x00, 0x42))
@@ -105,6 +124,7 @@ def test_native_spec_runner_returns_exact_per_boundary_witnesses():
 
     runner.capture_root_from_live()
     assert runner.frame_count() == 200
+    assert runner.ram()[0x10] == 0x55
     runner.release()
     assert core._dll.calls[-1] == "release"
 
