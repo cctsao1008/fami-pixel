@@ -6,6 +6,10 @@ from types import SimpleNamespace
 
 
 def _load_v35():
+    for name in tuple(sys.modules):
+        if name.startswith("mesen_smb_checkpoint_planner"):
+            sys.modules.pop(name, None)
+
     examples = (Path(__file__).resolve().parents[1] / "examples").resolve()
     sys.path.insert(0, str(examples))
     try:
@@ -52,9 +56,10 @@ def test_current_v35_transfers_v25_reset_v24_log_then_stable_v23_bootstrap():
     v25_log = '"Planner V25: sticky COLLECT objective enabled | "'
     v24_log = '"Planner V24: latency-tolerant forward model enabled | "'
     bootstrap = "bootstrap = _V23_BOOTSTRAP_SETUP_PLAN.setup_run_state(args)"
-    delegate = "return _V17.authority_main(args)"
+    build = "live_control = _build_live_authority_control()"
+    delegate = "return live_control.run(args)"
 
-    for token in (v26_reset, v25_reset, v25_log, v24_log, bootstrap, delegate):
+    for token in (v26_reset, v25_reset, v25_log, v24_log, bootstrap, build, delegate):
         assert token in source
     assert (
         source.index(v26_reset)
@@ -62,15 +67,17 @@ def test_current_v35_transfers_v25_reset_v24_log_then_stable_v23_bootstrap():
         < source.index(v25_log)
         < source.index(v24_log)
         < source.index(bootstrap)
+        < source.index(build)
         < source.index(delegate)
     )
+    assert "return _V17.authority_main(args)" not in source
     assert "return v26._BASE_V25_AUTHORITY(args)" not in source
     assert "return v25._BASE_V24_AUTHORITY(args)" not in source
     assert "return _V24.authority_main(args)" not in source
     assert "return v23.authority_main(args)" not in source
 
 
-def test_v35_v25_reset_happens_before_v17_without_calling_v25_v24_v23_wrappers(
+def test_v35_v25_reset_happens_before_stable_live_loop_without_calling_historical_wrappers(
     monkeypatch,
     tmp_path,
 ):
@@ -101,17 +108,19 @@ def test_v35_v25_reset_happens_before_v17_without_calling_v25_v24_v23_wrappers(
     monkeypatch.setattr(v35, "_AUTHORITY_RUN_RESET_PLAN", ResetPlan())
 
     def forbidden(_args):
-        raise AssertionError("historical V25/V24/V23 authority wrapper was invoked")
+        raise AssertionError("historical V25/V24/V23/V17 authority wrapper was invoked")
 
     monkeypatch.setattr(v35.v25, "authority_main", forbidden)
     monkeypatch.setattr(v35._V24, "authority_main", forbidden)
     monkeypatch.setattr(v35.v23, "authority_main", forbidden)
+    monkeypatch.setattr(v35._V17, "authority_main", forbidden)
 
-    def delegated(_args):
-        calls.append(("delegate", "v17"))
-        return 17
+    class LiveControl:
+        def run(self, _args):
+            calls.append(("delegate", "stable-live"))
+            return 17
 
-    monkeypatch.setattr(v35._V17, "authority_main", delegated)
+    monkeypatch.setattr(v35, "_build_live_authority_control", lambda: LiveControl())
 
     args = SimpleNamespace(
         step_timeout=1.0,
@@ -123,5 +132,5 @@ def test_v35_v25_reset_happens_before_v17_without_calling_v25_v24_v23_wrappers(
     v25_log_index = next(i for i, item in enumerate(calls) if item[0] == "log" and "Planner V25:" in item[1])
     v24_log_index = next(i for i, item in enumerate(calls) if item[0] == "log" and "Planner V24:" in item[1])
     v23_log_index = next(i for i, item in enumerate(calls) if item[0] == "log" and "Planner V23:" in item[1])
-    delegate_index = calls.index(("delegate", "v17"))
+    delegate_index = calls.index(("delegate", "stable-live"))
     assert v25_reset_index < v25_log_index < v24_log_index < v23_log_index < delegate_index

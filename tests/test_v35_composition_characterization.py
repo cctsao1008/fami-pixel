@@ -5,6 +5,10 @@ import sys
 
 
 def _load_v35():
+    for name in tuple(sys.modules):
+        if name.startswith("mesen_smb_checkpoint_planner"):
+            sys.modules.pop(name, None)
+
     examples = (Path(__file__).resolve().parents[1] / "examples").resolve()
     sys.path.insert(0, str(examples))
     try:
@@ -96,7 +100,7 @@ def test_v35_async_collect_dependencies_are_explicitly_composed():
     assert control.handoff_frames == v35._COLLECT_HANDOFF_FRAMES
     assert control.active_workers is v35._active_collect_workers
     assert control.proof_selector is v35.select_lineage_collect_proof
-    assert type(control.proof_selector).__module__ == "fami_pixel.games.smb1.collect_delay"
+    assert control.proof_selector.__module__ == "fami_pixel.games.smb1.collect_delay"
     assert control.ledger is v35._V27._AUTHORITY_ACTION_LEDGER
     assert control.commit_frames == v35.v23.EXECUTION_PREFIX_FRAMES
     assert control.proof_horizon_frames is v35._proof_horizon_for_freshness
@@ -132,7 +136,7 @@ def test_v35_collect_progress_dependencies_are_explicitly_composed():
 
     assert type(control).__module__ == "fami_pixel.control.composition"
     assert control.target_selector is v35.collect_target_from_radar
-    assert type(control.target_selector).__module__ == "fami_pixel.planning.collect_target"
+    assert control.target_selector.__module__ == "fami_pixel.planning.collect_target"
     assert control.progress is v35._PROGRESS_CONTROL
     assert control.eager_collect is v35._EAGER_COLLECT_CONTROL
 

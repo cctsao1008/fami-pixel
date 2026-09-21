@@ -5,6 +5,10 @@ import sys
 
 
 def _load_v35():
+    for name in tuple(sys.modules):
+        if name.startswith("mesen_smb_checkpoint_planner"):
+            sys.modules.pop(name, None)
+
     examples = (Path(__file__).resolve().parents[1] / "examples").resolve()
     sys.path.insert(0, str(examples))
     try:
@@ -44,8 +48,11 @@ def test_current_authority_runtime_delegation_chain_is_exact():
     v34, v33, v32, v30, v29, v28, v27, v26, v25, v24 = _authority_modules(v35)
 
     # Current V35 owns the historical V34..V23 runtime/bootstrap responsibilities
-    # and enters V17's actual live authority loop directly.
-    assert "return _V17.authority_main(args)" in inspect.getsource(v35.authority_main)
+    # and enters the stable LiveAuthorityControl loop directly.
+    source = inspect.getsource(v35.authority_main)
+    assert "live_control = _build_live_authority_control()" in source
+    assert "return live_control.run(args)" in source
+    assert "return _V17.authority_main(args)" not in source
     assert v35._V17 is v35.v23.v17
     assert v24._BASE_AUTHORITY_MAIN is v35.v23.authority_main
 
@@ -84,7 +91,9 @@ def test_authority_wrappers_preserve_their_current_stateful_responsibilities():
     assert '_AUTHORITY_RUN_RESET_PLAN.reset_named("v26-gap-commitment")' in v35_source
     assert '_AUTHORITY_RUN_RESET_PLAN.reset_named("v25-live-objective")' in v35_source
     assert "_V23_BOOTSTRAP_SETUP_PLAN.setup_run_state(args)" in v35_source
-    assert "return _V17.authority_main(args)" in v35_source
+    assert "live_control = _build_live_authority_control()" in v35_source
+    assert "return live_control.run(args)" in v35_source
+    assert "return _V17.authority_main(args)" not in v35_source
     assert "return v23.authority_main(args)" not in v35_source
     assert "return v26._BASE_V25_AUTHORITY(args)" not in v35_source
     assert "return v26.authority_main(args)" not in v35_source
@@ -144,11 +153,13 @@ def test_authority_extraction_boundary_is_runtime_orchestration_not_policy_rewri
     v34, _v33, _v32, _v30, _v29, _v28, v27, v26, _v25, _v24 = _authority_modules(v35)
 
     assert "_COLLECT_PROGRESS_CONTROL.decide(" in inspect.getsource(v35._best_collect_or_progress)
-    assert "return _V17.authority_main(args)" in inspect.getsource(v35.authority_main)
+    source = inspect.getsource(v35.authority_main)
+    assert "live_control = _build_live_authority_control()" in source
+    assert "return live_control.run(args)" in source
+    assert "return _V17.authority_main(args)" not in source
 
     # Current controller invocation order remains lineage recorder -> live-core
-    # capture -> base even though V27..V23 authority wrappers are bypassed.
-    source = inspect.getsource(v35.authority_main)
+    # capture -> base even though V27..V17 authority wrappers are bypassed.
     assert "capture_authority_core" in source
     assert "controller_layer(capture_layer)" in source
     assert "authority_action_recording_layer(_V27._AUTHORITY_ACTION_LEDGER)" in source
