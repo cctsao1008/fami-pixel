@@ -6,6 +6,10 @@ from types import SimpleNamespace
 
 
 def _load_v35():
+    for name in tuple(sys.modules):
+        if name.startswith("mesen_smb_checkpoint_planner"):
+            sys.modules.pop(name, None)
+
     examples = (Path(__file__).resolve().parents[1] / "examples").resolve()
     sys.path.insert(0, str(examples))
     try:
@@ -47,9 +51,10 @@ def test_current_v35_extracts_v27_runtime_and_keeps_recorder_around_lower_author
     v26_reset = '_AUTHORITY_RUN_RESET_PLAN.reset_named("v26-gap-commitment")'
     v25_reset = '_AUTHORITY_RUN_RESET_PLAN.reset_named("v25-live-objective")'
     bootstrap = "_V23_BOOTSTRAP_SETUP_PLAN.setup_run_state(args)"
-    delegate = "return _V17.authority_main(args)"
+    build = "live_control = _build_live_authority_control()"
+    delegate = "return live_control.run(args)"
 
-    for token in (progress, ledger, recorder, v26_reset, v25_reset, bootstrap, delegate):
+    for token in (progress, ledger, recorder, v26_reset, v25_reset, bootstrap, build, delegate):
         assert token in source
     assert (
         source.index(progress)
@@ -58,15 +63,17 @@ def test_current_v35_extracts_v27_runtime_and_keeps_recorder_around_lower_author
         < source.index(v26_reset)
         < source.index(v25_reset)
         < source.index(bootstrap)
+        < source.index(build)
         < source.index(delegate)
     )
+    assert "return _V17.authority_main(args)" not in source
     assert "return v23.authority_main(args)" not in source
     assert "return v26._BASE_V25_AUTHORITY(args)" not in source
     assert "return v26.authority_main(args)" not in source
     assert "return _V27.authority_main(args)" not in source
 
 
-def test_v35_v27_resets_occur_inside_v28_enrichment_before_v23_bootstrap_and_v17(monkeypatch, tmp_path):
+def test_v35_v27_resets_occur_inside_v28_enrichment_before_v23_bootstrap_and_stable_live_loop(monkeypatch, tmp_path):
     v35 = _load_v35()
     calls = []
 
@@ -94,11 +101,17 @@ def test_v35_v27_resets_occur_inside_v28_enrichment_before_v23_bootstrap_and_v17
 
     monkeypatch.setattr(v35, "_AUTHORITY_RUN_RESET_PLAN", ResetPlan())
 
-    def delegated(_args):
-        calls.append("v17")
-        return 17
+    def forbidden(_args):
+        raise AssertionError("historical V17 authority wrapper was invoked")
 
-    monkeypatch.setattr(v35._V17, "authority_main", delegated)
+    monkeypatch.setattr(v35._V17, "authority_main", forbidden)
+
+    class LiveControl:
+        def run(self, _args):
+            calls.append("stable-live")
+            return 17
+
+    monkeypatch.setattr(v35, "_build_live_authority_control", lambda: LiveControl())
 
     args = SimpleNamespace(
         step_timeout=1.0,
@@ -111,5 +124,5 @@ def test_v35_v27_resets_occur_inside_v28_enrichment_before_v23_bootstrap_and_v17
         "v26-gap-commitment",
         "v25-live-objective",
         "v23-bootstrap",
-        "v17",
+        "stable-live",
     ]
