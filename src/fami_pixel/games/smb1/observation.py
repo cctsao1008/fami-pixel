@@ -28,6 +28,9 @@ class Smb1Observation:
     player_state: int
     player_x_speed: int
     player_y_speed: int
+    player_y_move_force: int
+    vertical_force: int
+    vertical_force_down: int
     raw_joypad: int
     oper_mode: int
     oper_mode_task: int
@@ -64,6 +67,9 @@ def observation_from_state(native_frame_id: int, state: Smb1State) -> Smb1Observ
         player_state=state.player_state,
         player_x_speed=state.player_x_speed,
         player_y_speed=state.player_y_speed,
+        player_y_move_force=state.player_y_move_force,
+        vertical_force=state.vertical_force,
+        vertical_force_down=state.vertical_force_down,
         raw_joypad=state.saved_joypad1,
         oper_mode=state.oper_mode,
         oper_mode_task=state.oper_mode_task,
